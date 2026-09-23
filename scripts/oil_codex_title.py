@@ -455,10 +455,26 @@ def _process_thread(backend, generator, thread_id, root, config, *, apply=False,
         return result
 
 
+def windows_cli_preflight(version):
+    """报告 Windows 真实 Stop 的已知验收版本，不把它误作最低兼容要求。"""
+    match = re.search(r"codex-cli\s+(\d+)\.(\d+)\.(\d+)", version)
+    if not match:
+        relation = "unknown"
+    elif tuple(map(int, match.groups())) < (0, 155, 0):
+        relation = "older_than_tested"
+    else:
+        relation = "same_or_newer"
+    return {"windows_stop_tested_version": "0.155.0", "version_relation": relation}
+
+
 def doctor(binary, root, config, thread_id=None):
     version = subprocess.run([binary, "--version"], capture_output=True, encoding="utf-8", timeout=10, **process_options())
+    if version.returncode or not version.stdout.strip():
+        raise BackendError("Codex CLI --version 失败；请检查 codex_bin 路径")
     output = {"codex_bin": binary, "version": version.stdout.strip(), "config": config,
               "data_dir": str(root), "desktop_display": "not_verified"}
+    if sys.platform == "win32":
+        output["cli_preflight"] = windows_cli_preflight(output["version"])
     # 仅检查定义，不创建或恢复任何会话，因此不会触发 SessionStart/Stop。
     with CodexBackend(binary, disable_hooks=False) as backend:
         cwd = str(Path.cwd())

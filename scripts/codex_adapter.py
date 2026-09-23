@@ -54,11 +54,24 @@ def windows_binary(path):
     raise BackendError("未找到 npm 入口对应的 codex.exe；请重装 Codex CLI 或通过 configure --codex-bin 指定原生路径")
 
 
+def codex_responds(binary):
+    """确认候选入口可运行，避免 WindowsApps 的受限 exe 抢先命中。"""
+    try:
+        result = subprocess.run([binary, "--version"], capture_output=True,
+                                encoding="utf-8", timeout=10, **process_options())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
 def find_codex(explicit: str | None = None) -> str:
     if explicit:
         resolved = shutil.which(explicit)
         if resolved:
-            return windows_binary(resolved) if sys.platform == "win32" else resolved
+            binary = windows_binary(resolved) if sys.platform == "win32" else resolved
+            if sys.platform == "win32" and not codex_responds(binary):
+                raise BackendError("配置的 Codex CLI 无法执行 --version；请用 configure --codex-bin 指定可用的原生 codex.exe")
+            return binary
         raise BackendError("配置的 Codex 可执行文件不存在")
     if sys.platform == "darwin":
         for base in (Path("/Applications"), Path.home() / "Applications"):
@@ -67,9 +80,25 @@ def find_codex(explicit: str | None = None) -> str:
                 if candidate.is_file() and os.access(candidate, os.X_OK):
                     return str(candidate)
     if sys.platform == "win32":
-        path = shutil.which("codex.exe") or shutil.which("codex")
-        if path:
-            return windows_binary(path)
+        # PATH 中的 WindowsApps exe 可能存在但拒绝执行；继续尝试 npm 的 cmd 入口。
+        seen = set()
+        found = False
+        for name in ("codex", "codex.cmd", "codex.exe"):
+            path = shutil.which(name)
+            if not path:
+                continue
+            found = True
+            try:
+                binary = windows_binary(path)
+            except BackendError:
+                continue
+            if binary in seen:
+                continue
+            seen.add(binary)
+            if codex_responds(binary):
+                return binary
+        if found:
+            raise BackendError("发现 Codex CLI 入口但无法执行；请用 configure --codex-bin 指定可用的原生 codex.exe")
         raise BackendError("未找到 Windows Codex CLI；请将 codex.exe 加入 PATH，或通过 configure --codex-bin 指定路径")
     path = shutil.which("codex")
     if not path:

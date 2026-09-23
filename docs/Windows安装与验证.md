@@ -1,6 +1,17 @@
 # Windows 安装与验证
 
-Windows 版本沿用 Python 实现，没有额外的文件锁依赖。当前已完成适配并通过自动化测试，官方 Codex CLI 的原生入口与 App Server 连接也已验证；Windows 桌面端登录后的真实 Stop 触发、Luna 调用与列表刷新尚未实测。
+Windows 版本沿用 Python 实现，没有额外的文件锁依赖。自动化测试、Windows CLI 真实 Stop 触发、Luna 调用和 App Server 标题读回均已验证；另有一条 Windows 桌面话题完成真实 Stop 改名和显示验收。置顶列表等其他显示状态尚未实测。
+
+## 首次预检
+
+在完整 Windows PowerShell 中执行：
+
+```powershell
+py -3 --version
+codex --version
+```
+
+[Windows 实测 Issue #1](https://github.com/oil-oil/oil-codex-title/issues/1) 使用 CLI `0.155.0` 完成真实 Stop 命名；这是已验证版本，不代表低于它的版本一定不兼容。`doctor` 的 `cli_preflight` 会报告当前版本与该版本的关系，但 `ready` 仍只表示 App Server 和 Hook 定义可用。若官方更新器在 Codex 内置 PowerShell 中提示缺少 `Get-FileHash`，请改用完整 Windows PowerShell 运行官方更新命令。
 
 ## 安装条件
 
@@ -8,7 +19,7 @@ Windows 版本沿用 Python 实现，没有额外的文件锁依赖。当前已�
 2. 安装并登录兼容的 Codex CLI。可使用 PATH 中的原生 `codex.exe`，或标准 npm 安装提供的 `codex.cmd`。
 3. 将完整插件安装到本机 Codex，通过官方 Hook 管理入口检查并信任定义。安装插件本身不代表 Hook 已获信任。
 
-插件会将标准 npm 入口解析到原生 `codex.exe`，支持 x64/ARM64 对应包及新旧 vendor 布局；不会通过 `cmd.exe` 转义命名参数。无法识别的自定义启动脚本需要显式指定原生可执行文件。
+插件会将标准 npm 入口解析到原生 `codex.exe`，支持 x64/ARM64 对应包及新旧 vendor 布局；不会通过 `cmd.exe` 转义命名参数。自动发现会先运行候选入口的 `--version`，跳过存在但拒绝执行的 WindowsApps 入口。显式配置的不可执行路径会报错，不会静默改用另一份 CLI。无法识别的自定义启动脚本需要显式指定原生可执行文件。
 
 在插件目录的 PowerShell 中运行：
 
@@ -33,6 +44,12 @@ py -3 scripts/oil_codex_title.py configure --codex-bin 'C:\Codex\codex.exe'
 
 2026-09-14 的四组环境均通过全部 54 项测试，结果见 [跨平台验收记录](https://github.com/oil-oil/oil-codex-title/actions/runs/34799381646)。Windows CLI 检查使用 codex-cli 0.154.0，App Server 连接成功；CI 没有登录账号，也没有加载桌面 Hook。
 
-账号环境中的最终检查仍需在 Windows Codex 中完成：新建正常话题、结束一轮有具体目标的对话、检查后台日志与实际显示标题，确认没有额外命名消息。没有这一步证据时，不宣称 Windows 桌面体验已经完整验收。
+2026-09-23 的本地 Windows CLI `0.156.1` 验收：新建测试对话后，首轮 Stop 确实触发并完成独立 Luna 调用，但宿主首次标题同时变化，插件记录 `stale_result` 且未写入；下一轮正常 Stop 记录 `renamed`，App Server 读回标题与日志一致，原对话没有额外命名消息。该证据只覆盖 CLI，不覆盖桌面侧边栏刷新。
+
+同日用户完成一条 Windows 桌面话题的实测：插件日志记录 `renamed`，后续轮次记录 `kept`；App Server 读回的标题与用户提供的桌面截图一致。该证据确认这一话题的自动触发、持久标题和可见显示，不证明置顶列表、其他任务或所有桌面刷新场景均一致。文档不保存真实话题 ID、对话内容或截图路径。
+
+其他桌面状态仍需在 Windows Codex 中逐项检查：新建正常话题、结束一轮有具体目标的对话、核对后台日志、App Server 标题与实际显示。不要把单条话题的成功扩展为所有列表状态已经验收。
+
+首次验收按以下边界排查：`doctor` 失败先检查 CLI 路径、版本与 App Server；Hook 未 `ready` 时在 Codex CLI 输入 `/hooks`，选中本插件的 Stop Hook 后按 `t` 信任；`ready` 后仍要完成真实对话，等待日志出现 `renamed`，再用 `doctor --thread <话题 ID>` 读回相同标题。若独立模型超时，先检查 CLI 的网络或传输错误，最多恢复性重试一次，不要重复安装插件。`codex exec` 成功、手动运行脚本或仅有锁文件，都不能代替真实 Stop 验收。
 
 参考：[官方 Hook 的 Windows 命令与异步配置](https://learn.chatgpt.com/docs/hooks)、[Python Windows 文件锁](https://docs.python.org/3/library/msvcrt.html)。

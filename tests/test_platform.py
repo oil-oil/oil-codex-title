@@ -86,8 +86,34 @@ class PlatformTests(unittest.TestCase):
 
     def test_windows_native_path_is_preferred(self):
         exe = str(self.root / 'codex.exe')
-        with patch('codex_adapter.sys.platform', 'win32'), patch('codex_adapter.shutil.which', side_effect=lambda name: exe if name=='codex.exe' else None):
+        with patch('codex_adapter.sys.platform', 'win32'), \
+             patch('codex_adapter.shutil.which', side_effect=lambda name: exe if name=='codex.exe' else None), \
+             patch('codex_adapter.codex_responds', return_value=True):
             self.assertEqual(find_codex(), exe)
+
+    def test_windows_unlaunchable_app_binary_falls_back_to_npm(self):
+        app_exe = str(self.root / 'WindowsApps' / 'codex.exe')
+        npm_cmd = str(self.root / 'codex.cmd')
+        npm_exe = self.make_npm_binary('node_modules/@openai/codex/node_modules/@openai/codex-win32-x64')
+        entries = {'codex': app_exe, 'codex.cmd': npm_cmd, 'codex.exe': app_exe}
+        with patch('codex_adapter.sys.platform', 'win32'), \
+             patch('codex_adapter.platform.machine', return_value='AMD64'), \
+             patch('codex_adapter.shutil.which', side_effect=entries.get), \
+             patch('codex_adapter.codex_responds', side_effect=lambda binary: binary != app_exe):
+            self.assertEqual(find_codex(), str(npm_exe))
+
+    def test_explicit_windows_binary_does_not_silently_fall_back(self):
+        app_exe = str(self.root / 'WindowsApps' / 'codex.exe')
+        with patch('codex_adapter.sys.platform', 'win32'), \
+             patch('codex_adapter.shutil.which', return_value=app_exe), \
+             patch('codex_adapter.codex_responds', return_value=False):
+            with self.assertRaisesRegex(BackendError, '配置的 Codex CLI 无法执行'):
+                find_codex(app_exe)
+
+    def test_doctor_distinguishes_tested_version_from_minimum(self):
+        self.assertEqual(app.windows_cli_preflight('codex-cli 0.151.0')['version_relation'], 'older_than_tested')
+        self.assertEqual(app.windows_cli_preflight('codex-cli 0.155.0')['version_relation'], 'same_or_newer')
+        self.assertEqual(app.windows_cli_preflight('unexpected')['version_relation'], 'unknown')
 
     def test_windows_paths_cannot_leak_into_titles(self):
         for name in (r'🧩 C:\Users\example\app｜修复', r'🧩 \\server\private｜修复', '🧩 C:/Users/example/app｜修复'):
