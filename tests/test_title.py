@@ -485,8 +485,12 @@ class TitleTests(unittest.TestCase):
         self.assertEqual(config["future"], "preserved")
         self.assertEqual(config["recent_turns"], 5)
 
+    def test_default_model_is_gpt_6_luna_fast(self):
+        self.assertEqual(title.DEFAULTS["model"], "gpt-6-luna")
+        self.assertEqual(title.DEFAULTS["service_tier"], "priority")
+
     def test_model_switch_does_not_inherit_unsupported_fast_tier(self):
-        title.atomic_json(self.root / "config.json", {"model": "gpt-5.6-luna", "service_tier": "priority", "future": 1})
+        title.atomic_json(self.root / "config.json", {"model": "gpt-6-luna", "service_tier": "priority", "future": 1})
         env = os.environ | {"OIL_CODEX_TITLE_DATA": str(self.root)}
         proc = subprocess.run([sys.executable, str(ROOT / "scripts/oil_codex_title.py"),
                                "configure", "--model", "gpt-5.3-codex-spark"],
@@ -499,7 +503,7 @@ class TitleTests(unittest.TestCase):
     def test_fast_option_maps_to_priority_service(self):
         env = os.environ | {"OIL_CODEX_TITLE_DATA": str(self.root)}
         proc = subprocess.run([sys.executable, str(ROOT / "scripts/oil_codex_title.py"),
-                               "configure", "--model", "gpt-5.6-luna", "--service-tier", "fast"],
+                               "configure", "--model", "gpt-6-luna", "--service-tier", "fast"],
                               capture_output=True, text=True, env=env)
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(json.loads(proc.stdout)["service_tier"], "priority")
