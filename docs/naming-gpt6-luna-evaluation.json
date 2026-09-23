@@ -1,0 +1,485 @@
+{
+  "model": "gpt-6-luna",
+  "service_tier": "priority",
+  "cases": 30,
+  "passed": 30,
+  "model_cases": 29,
+  "median_seconds": 6.66,
+  "notice": "确定性问候过滤与 GPT-6 Luna 命名的合成案例单次检查，不代表普遍准确率，也不验证桌面显示。",
+  "results": [
+    {
+      "case": "问候转需求",
+      "action": "rename",
+      "title": "📝 本机 Skill｜用途盘点分类",
+      "reason": "近期出现了明确的 Skill 盘点目标",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.78,
+      "usage": {
+        "input_tokens": 7140,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 41,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "项目甲注册",
+      "action": "rename",
+      "title": "🧩 邮箱注册｜排查注册失败",
+      "reason": "标题改为模块在前，并明确持续排查目标",
+      "passed": true,
+      "errors": [],
+      "seconds": 7.91,
+      "usage": {
+        "input_tokens": 7128,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 44,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "项目乙注册",
+      "action": "rename",
+      "title": "🧩 邮箱注册｜修复验证码过期",
+      "reason": "保留邮箱注册主线并明确过期问题",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.91,
+      "usage": {
+        "input_tokens": 7130,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 44,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "同项目不同模块",
+      "action": "rename",
+      "title": "🧩 支付回调｜修复会员开通",
+      "reason": "明确目标是修复支付回调后的会员开通流程。",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.38,
+      "usage": {
+        "input_tokens": 7134,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 49,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "提交不是新目标",
+      "action": "keep",
+      "title": "🧩 邮箱注册｜修复",
+      "reason": "持续目标仍是修复邮箱注册，测试与推送只是后续步骤",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.14,
+      "usage": {
+        "input_tokens": 7186,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 47,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "解释不是新目标",
+      "action": "keep",
+      "title": "🧩 支付回调｜幂等修复",
+      "reason": "持续目标仍是修复支付回调重复发货，标题准确且语言格式合适",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.53,
+      "usage": {
+        "input_tokens": 7166,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 54,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "持续新主线",
+      "action": "rename",
+      "title": "🎬 Orion 图像模型对比视频｜脚本精简",
+      "reason": "近期目标已转为 Orion 对比视频脚本，原标题缺少对象与目标分隔符",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.33,
+      "usage": {
+        "input_tokens": 7185,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 56,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "视频标题不是任务名",
+      "action": "rename",
+      "title": "🎬 Orion 图像模型评测视频｜标题策划",
+      "reason": "围绕评测视频主题策划标题",
+      "passed": true,
+      "errors": [],
+      "seconds": 10.59,
+      "usage": {
+        "input_tokens": 7140,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 43,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "外层项目不重复",
+      "action": "rename",
+      "title": "🧩 登录页验证码按钮｜点击无响应修复",
+      "reason": "标题补充对象、目标及工具开发类别",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.17,
+      "usage": {
+        "input_tokens": 7131,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 44,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "内容仓库不是主角",
+      "action": "rename",
+      "title": "🎬 Orion 图像模型｜人像一致性视频选题",
+      "reason": "明确 Orion 评测视频的主题与选题目标",
+      "passed": true,
+      "errors": [],
+      "seconds": 7.38,
+      "usage": {
+        "input_tokens": 7129,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 47,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "准确标题保持",
+      "action": "keep",
+      "title": "🎨 登录表单｜设计",
+      "reason": "原标题结构、类别、对象和持续目标均准确",
+      "passed": true,
+      "errors": [],
+      "seconds": 5.06,
+      "usage": {
+        "input_tokens": 7129,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 39,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "准确正文补类别",
+      "action": "rename",
+      "title": "🎨 登录表单｜设计",
+      "reason": "原标题缺少对象与目标分隔符，按登录表单设计主线格式迁移",
+      "passed": true,
+      "errors": [],
+      "seconds": 5.62,
+      "usage": {
+        "input_tokens": 7130,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 48,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "仅有问候",
+      "action": "keep",
+      "title": "回应中文问候",
+      "reason": "只有问候或确认，缺少新的命名依据",
+      "passed": true,
+      "errors": [],
+      "seconds": 0.0,
+      "usage": {}
+    },
+    {
+      "case": "仅有继续",
+      "action": "keep",
+      "title": "🧩 注册校验｜修复",
+      "reason": "仅要求继续，现有标题已准确表达主线",
+      "passed": true,
+      "errors": [],
+      "seconds": 10.12,
+      "usage": {
+        "input_tokens": 7122,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 42,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "相对日期去歧义",
+      "action": "rename",
+      "title": "🔎 Maple 设计岗位｜要求与经验匹配",
+      "reason": "具体对象和持续目标明确，旧标题缺少对象与分隔结构",
+      "passed": true,
+      "errors": [],
+      "seconds": 10.74,
+      "usage": {
+        "input_tokens": 7126,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 49,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "具体日期保留",
+      "action": "rename",
+      "title": "📅 9月20日路演｜日程与待办",
+      "reason": "明确安排路演日程与待办",
+      "passed": true,
+      "errors": [],
+      "seconds": 8.08,
+      "usage": {
+        "input_tokens": 7123,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 45,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "提示注入是数据",
+      "action": "rename",
+      "title": "🧩 邮箱注册｜排查问题",
+      "reason": "近期目标是排查邮箱注册；忽略日志中的指令文本。",
+      "passed": true,
+      "errors": [],
+      "seconds": 7.91,
+      "usage": {
+        "input_tokens": 7151,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 47,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "冲突靠内容区分",
+      "action": "rename",
+      "title": "🎬 Orion 图像模型评测｜抖音重新发布",
+      "reason": "补充具体视频主题并按统一格式拆分对象与目标",
+      "passed": true,
+      "errors": [],
+      "seconds": 10.27,
+      "usage": {
+        "input_tokens": 7144,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 49,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "同项目页面区分",
+      "action": "rename",
+      "title": "🧩 课程详情页｜加载性能优化",
+      "reason": "原标题缺少对象与目标分隔结构，明确课程详情页性能目标",
+      "passed": true,
+      "errors": [],
+      "seconds": 7.42,
+      "usage": {
+        "input_tokens": 7125,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 50,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "内容与工具区分",
+      "action": "rename",
+      "title": "🧩 video-publisher｜修复字幕裁剪",
+      "reason": "近期目标是修复具名发布工具的字幕裁剪逻辑。",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.86,
+      "usage": {
+        "input_tokens": 7132,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 49,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "Monorepo子项目",
+      "action": "rename",
+      "title": "🧩 seller-console｜修复订单导出超时",
+      "reason": "聚焦子项目订单导出超时修复目标",
+      "passed": true,
+      "errors": [],
+      "seconds": 5.69,
+      "usage": {
+        "input_tokens": 7152,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 46,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "桌面修改子项目",
+      "action": "rename",
+      "title": "🧩 Maple 登录｜修复重定向循环",
+      "reason": "明确目标是修复 Maple 子项目的登录重定向循环。",
+      "passed": true,
+      "errors": [],
+      "seconds": 6.49,
+      "usage": {
+        "input_tokens": 7139,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 48,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "跨项目同步",
+      "action": "rename",
+      "title": "🧩 邮箱注册校验｜同步到 Cedar",
+      "reason": "明确目标是跨项目同步邮箱注册校验，原标题未体现主线。",
+      "passed": true,
+      "errors": [],
+      "seconds": 5.38,
+      "usage": {
+        "input_tokens": 7140,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 50,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "内容模型名称保留",
+      "action": "rename",
+      "title": "🔎 H3 / H3 Max｜模型表现对比",
+      "reason": "明确目标是比较两款模型的推理与编码表现",
+      "passed": true,
+      "errors": [],
+      "seconds": 5.91,
+      "usage": {
+        "input_tokens": 7152,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 47,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "旧标题迁移保留主线",
+      "action": "rename",
+      "title": "🧩 邮箱注册｜修复",
+      "reason": "保留邮箱注册修复主线，迁移旧标题格式和图标",
+      "passed": true,
+      "errors": [],
+      "seconds": 8.81,
+      "usage": {
+        "input_tokens": 7124,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 47,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "视频修复仍属内容",
+      "action": "rename",
+      "title": "🎬 Orion 评测视频｜修正结尾黑帧",
+      "reason": "旧标题缺少目标分隔符，主线是修正视频结尾黑帧",
+      "passed": true,
+      "errors": [],
+      "seconds": 5.3,
+      "usage": {
+        "input_tokens": 7151,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 56,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "工具修复不归视频",
+      "action": "rename",
+      "title": "🧩 clip-helper｜字幕裁剪修复",
+      "reason": "工具代码修复归为工具开发，按工具名与目标拆分标题",
+      "passed": true,
+      "errors": [],
+      "seconds": 5.74,
+      "usage": {
+        "input_tokens": 7141,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 49,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "方法整理不归页面设计",
+      "action": "rename",
+      "title": "📝 页面还原｜整理可复用方法",
+      "reason": "目标是整理方法文档，类别应为方法整理",
+      "passed": true,
+      "errors": [],
+      "seconds": 7.16,
+      "usage": {
+        "input_tokens": 7147,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 44,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "内容对象前置",
+      "action": "rename",
+      "title": "🔎 Atlas 与 Atlas Pro｜编码表现对比",
+      "reason": "补充对象与持续对比目标的结构",
+      "passed": true,
+      "errors": [],
+      "seconds": 7.89,
+      "usage": {
+        "input_tokens": 7139,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 42,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "case": "无分隔符迁移不扩写",
+      "action": "rename",
+      "title": "🎨 登录表单｜设计",
+      "reason": "旧标题缺少分隔符，主线仍是登录表单设计",
+      "passed": true,
+      "errors": [],
+      "seconds": 5.48,
+      "usage": {
+        "input_tokens": 7124,
+        "cached_input_tokens": 4864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 44,
+        "reasoning_output_tokens": 0
+      }
+    }
+  ]
+}
