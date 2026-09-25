@@ -25,6 +25,7 @@ DEFAULTS = {
     "enabled": True,
     "model": "gpt-5.6-luna",
     "service_tier": "priority",
+    "use_user_config": False,
     "codex_bin": None,
     "recent_turns": 5,
     "max_context_chars": 14000,
@@ -70,6 +71,8 @@ def load_config(root):
     config = DEFAULTS | read_json(root / "config.json")
     if not isinstance(config["enabled"], bool):
         raise ValueError("enabled 必须是布尔值")
+    if not isinstance(config["use_user_config"], bool):
+        raise ValueError("use_user_config 必须是布尔值")
     for key, lower, upper in (("recent_turns", 3, 5), ("max_context_chars", 3000, 20000),
                               ("model_timeout_seconds", 10, 110), ("max_parallel_workers", 1, 8)):
         if type(config[key]) is not int or not lower <= config[key] <= upper:
@@ -502,6 +505,8 @@ def main():
     p.add_argument("--model")
     p.add_argument("--codex-bin")
     p.add_argument("--service-tier", choices=("standard", "fast"))
+    p.add_argument("--use-user-config", action=argparse.BooleanOptionalAction, default=None,
+                   help="让独立模型读取 Codex 用户配置中的第三方服务商；默认隔离")
     for name in ("rename", "lock", "unlock"):
         p = sub.add_parser(name)
         p.add_argument("thread_id")
@@ -538,6 +543,8 @@ def main():
                     changes["codex_bin"] = find_codex(args.codex_bin)
                 if args.service_tier:
                     changes["service_tier"] = "priority" if args.service_tier == "fast" else None
+                if args.use_user_config is not None:
+                    changes["use_user_config"] = args.use_user_config
             atomic_json(config_path, changes)
             print(json.dumps(load_config(root), ensure_ascii=False))
             return 0

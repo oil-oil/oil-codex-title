@@ -85,6 +85,50 @@ def worker_env() -> dict[str, str]:
     return env
 
 
+def isolated_provider_env(temp: Path) -> dict[str, str]:
+    """只给独立模型传入所选服务商；不继承用户的工具和通知配置。"""
+    try:
+        import tomllib
+    except ModuleNotFoundError as exc:
+        raise BackendError("第三方模型配置需要 Python 3.11 或更新版本") from exc
+    env = worker_env()
+    source = Path(env.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
+    with source.open("rb") as stream:
+        settings = tomllib.load(stream)
+    name = settings.get("model_provider")
+    provider = settings.get("model_providers", {}).get(name)
+    if not isinstance(name, str) or not isinstance(provider, dict):
+        raise BackendError("Codex 用户配置中未找到选中的第三方模型服务商")
+    if provider.get("requires_openai_auth"):
+        raise BackendError("此服务商依赖 Codex 登录；请使用自有密钥的服务商配置")
+
+    def value(item):
+        if isinstance(item, str):
+            return json.dumps(item, ensure_ascii=False)
+        if isinstance(item, bool):
+            return "true" if item else "false"
+        if isinstance(item, (int, float)):
+            return str(item)
+        if isinstance(item, list):
+            return "[" + ", ".join(map(value, item)) + "]"
+        if isinstance(item, dict):
+            return "{ " + ", ".join(f"{json.dumps(key)} = {value(val)}" for key, val in item.items()) + " }"
+        raise BackendError("模型服务商配置包含不支持的值")
+
+    provider = provider.copy()
+    secret = provider.pop("experimental_bearer_token", None)
+    if secret:
+        env["OIL_CODEX_TITLE_PROVIDER_KEY"] = secret
+        provider["env_key"] = "OIL_CODEX_TITLE_PROVIDER_KEY"
+    home = temp / "codex-home"
+    home.mkdir()
+    lines = [f"model_provider = {value(name)}", f"[model_providers.{value(name)}]"]
+    lines.extend(f"{json.dumps(key)} = {value(item)}" for key, item in provider.items())
+    (home / "config.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    env["CODEX_HOME"] = str(home)
+    return env
+
+
 class CodexBackend:
     """独立 stdio 连接；不会 resume 原会话或向它发送 turn/start。"""
     def __init__(self, binary: str, timeout: float = 15, *, disable_hooks: bool = True):
@@ -239,14 +283,14 @@ def _generate_title_once(binary, config, context, plugin_root, *, before_model=N
 def generate_json(binary, config, context, policy, output_schema, *, before_model=None):
     """隔离的无工具临时模型，供命名和归档评估共用。"""
     deadline = time.monotonic() + config["model_timeout_seconds"]
-    # 复用当前登录；不复制凭据，不恢复原会话，不保留独立会话记录。
+    # 默认复用当前登录；第三方服务商只传入选中配置，不继承用户的工具设置。
     with tempfile.TemporaryDirectory(prefix="oil-codex-title-") as tmp:
         temp = Path(tmp)
         schema = temp / "schema.json"
         schema.write_text(json.dumps(output_schema), encoding="utf-8")
         output = temp / "result.json"
         args = [
-            binary, "exec", "--ephemeral", "--ignore-user-config",
+            binary, "exec", "--ephemeral",
             "--skip-git-repo-check", "--sandbox", "read-only", "-C", tmp,
             "--disable", "hooks", "--disable", "shell_tool",
             "--disable", "plugins", "--disable", "apps", "--disable", "multi_agent",
@@ -258,8 +302,11 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
             "--output-schema", str(schema), "--output-last-message", str(output),
             "--json", "-",
         ]
+        if not config.get("use_user_config", False):
+            args.insert(3, "--ignore-user-config")
         if config.get("service_tier"):
             args[2:2] = ["-c", "service_tier=" + json.dumps(config["service_tier"])]
+        env = isolated_provider_env(temp) if config.get("use_user_config", False) else worker_env()
         # 配额等待和每次内部重试之后，紧接真实模型进程启动前复核。
         if before_model:
             before_model()
@@ -270,7 +317,7 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
         usage, status = {}, "interrupted"
         try:
             proc = subprocess.run(args, input=json.dumps(context, ensure_ascii=False),
-                                  capture_output=True, encoding="utf-8", env=worker_env(),
+                                  capture_output=True, encoding="utf-8", env=env,
                                   timeout=remaining, **process_options())
             usage, forbidden_tool = parse_usage(proc.stdout)
             status = "process_error"
