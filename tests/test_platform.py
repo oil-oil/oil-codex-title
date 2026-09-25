@@ -105,6 +105,7 @@ class PlatformTests(unittest.TestCase):
     def test_model_process_launch_accepts_windows_flags_and_unicode_json(self):
         expected = {"action":"rename","title":"🧩 中文工具｜修复","reason":"目标明确"}
         def fake_run(args, **kwargs):
+            self.assertIn("--ignore-user-config", args)
             self.assertEqual(kwargs["creationflags"], 0)
             self.assertEqual(kwargs["encoding"], "utf-8")
             self.assertEqual(json.loads(kwargs["input"])["original_goal"], "修复中文工具")
@@ -114,6 +115,34 @@ class PlatformTests(unittest.TestCase):
         with patch("codex_adapter.process_options", return_value={"creationflags":0}), patch("codex_adapter.subprocess.run", side_effect=fake_run):
             candidate, _ = generate_title("codex.exe",app.DEFAULTS,{"current_title":"旧标题","original_goal":"修复中文工具"},ROOT)
         self.assertEqual(candidate,expected)
+
+    @unittest.skipIf(sys.version_info < (3, 11), "第三方服务商配置使用 tomllib")
+    def test_custom_provider_uses_only_provider_settings(self):
+        user_home = self.root / "user-codex"
+        user_home.mkdir()
+        (user_home / "config.toml").write_text(
+            'model_provider = "custom"\nnotify = ["unrelated"]\n'
+            '[model_providers.custom]\nbase_url = "https://example.com/v1"\n'
+            'experimental_bearer_token = "fixture-secret"\n'
+            '[mcp_servers.unrelated]\ncommand = "unrelated"\n', encoding="utf-8")
+        def fake_run(args, **kwargs):
+            self.assertNotIn("--ignore-user-config", args)
+            self.assertIn("--ephemeral", args)
+            self.assertIn("--disable", args)
+            self.assertNotIn("fixture-secret", " ".join(args))
+            self.assertEqual(kwargs["env"]["OIL_CODEX_TITLE_PROVIDER_KEY"], "fixture-secret")
+            filtered = (Path(kwargs["env"]["CODEX_HOME"]) / "config.toml").read_text(encoding="utf-8")
+            self.assertIn('env_key', filtered)
+            self.assertNotIn("fixture-secret", filtered)
+            self.assertNotIn("mcp_servers", filtered)
+            self.assertNotIn("notify", filtered)
+            output = Path(args[args.index("--output-last-message") + 1])
+            output.write_text(json.dumps({"action":"keep","title":"旧标题","reason":"保持"}), encoding="utf-8")
+            return SimpleNamespace(returncode=0, stdout="")
+        config = {**app.DEFAULTS, "use_user_config": True}
+        with patch.dict(os.environ, {"CODEX_HOME": str(user_home)}), patch("codex_adapter.subprocess.run", side_effect=fake_run):
+            from codex_adapter import generate_json, SCHEMA
+            generate_json("codex.exe", config, {"current_title":"旧标题"}, ROOT / "prompts/naming.md", SCHEMA)
 
     def test_fixture_evaluator_can_read_chinese_in_legacy_locale(self):
         env = os.environ | {'PYTHONUTF8':'0','PYTHONIOENCODING':'utf-8'}

@@ -22,6 +22,7 @@ Windows 下将示例的 `python3` 换成 `py -3`，需要已安装 Python Launch
 1. 执行 `python3 <入口> doctor`，检查 Python、Codex 路径和 App Server。
 2. 用户提供话题时，追加 `--thread <话题 ID>` 验证读取兼容性。
 3. 需要配置时，执行 `configure --model <模型 ID> --service-tier fast` 或 `--service-tier standard`；修正可执行文件使用 `configure --codex-bin <路径>`。模型和档位应来自用户选择或当前可用列表，不猜模型名。默认 Luna Fast，Spark 使用 standard。
+   用户明确要求沿用 Codex 中的第三方模型服务时，需 Python 3.11+，执行 `configure --use-user-config --model <模型 ID> --service-tier standard`；插件仅提取所选服务商设置供独立模型使用，不要把密钥复制进插件配置或命令行。使用 `--no-use-user-config` 可恢复默认模式。启用前说明话题摘录会发给该服务商。
 4. 安装及信任步骤见插件根目录的 `README.md`。只通过官方插件安装和 Hook 信任入口操作，不修改信任数据库，也不加绕过信任的参数。
 
 Hook 安装、启用、信任和实际成功运行是不同状态。`doctor` 成功不能证明 Hook 已自动触发。
