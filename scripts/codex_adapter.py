@@ -16,6 +16,26 @@ import time
 from usage_ledger import begin_attempt, parse_usage
 
 
+def safe_diagnostic(value, limit=600):
+    """Return bounded, single-line diagnostics without copying credentials or full paths."""
+    text = str(value or "").replace("\x00", " ")
+    text = re.sub(r"(?i)(bearer\s+)[^\s]+", r"\1<redacted>", text)
+    text = re.sub(
+        r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        text,
+    )
+    text = re.sub(r"(?i)[A-Z]:\\Users\\[^\s\"']+", "<user-path>", text)
+    text = re.sub(r"(?i)(?:/Users/|/home/)[^\s/]+", "<user-path>", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    # Hook 的父进程可能按 Windows 本地代码页读取 stderr；ASCII 转义避免诊断
+    # 本身因为中文/emoji 解码失败，仍保留可读的错误关键词。
+    text = text.encode("ascii", "backslashreplace").decode("ascii")
+    if len(text) > limit:
+        return text[: max(0, limit - 3)].rstrip() + "..."
+    return text
+
+
 class BackendError(RuntimeError):
     pass
 
@@ -82,6 +102,11 @@ def worker_env() -> dict[str, str]:
     for key in ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_APP_TOOLS_PIPE_PATH"):
         env.pop(key, None)
     env["OIL_CODEX_TITLE_WORKER"] = "1"
+    # Windows 提权沙箱内 Windows 用户目录 API 返回沙箱用户（CodexSandboxOffline），
+    # 子进程会把 CODEX_HOME 解析到空目录；USERPROFILE 环境变量仍指向真实用户目录。
+    user_home = os.environ.get("USERPROFILE")
+    if user_home and "CODEX_HOME" not in env:
+        env["CODEX_HOME"] = os.path.join(user_home, ".codex")
     return env
 
 
@@ -94,14 +119,21 @@ class CodexBackend:
         self.messages = queue.Queue()
         self.counter = 0
         self.disable_hooks = disable_hooks
+        self._stderr = queue.Queue()
 
     def __enter__(self):
-        self.proc = subprocess.Popen(
-            [self.binary, "app-server"] + (["--disable", "hooks"] if self.disable_hooks else []),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            encoding="utf-8", env=worker_env(), **process_options(),
-        )
+        try:
+            self.proc = subprocess.Popen(
+                [self.binary, "app-server"] + (["--disable", "hooks"] if self.disable_hooks else []),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                encoding="utf-8", env=worker_env(), **process_options(),
+            )
+        except OSError as exc:
+            detail = safe_diagnostic(exc)
+            suffix = f"；{detail}" if detail else ""
+            raise BackendError(f"App Server 启动失败（{type(exc).__name__}{suffix}）") from exc
         threading.Thread(target=self._reader, daemon=True).start()
+        threading.Thread(target=self._stderr_reader, daemon=True).start()
         try:
             self.call("initialize", {
                 "clientInfo": {"name": "oil-codex-title", "version": "0.1.0"},
@@ -122,6 +154,33 @@ class CodexBackend:
         finally:
             self.messages.put(None)
 
+    def _stderr_reader(self):
+        try:
+            for line in self.proc.stderr:
+                # 保留很小的尾部，便于区分权限、runtime 和协议启动失败。
+                self._stderr.put(safe_diagnostic(line, 240))
+                while self._stderr.qsize() > 8:
+                    self._stderr.get_nowait()
+        except (OSError, ValueError):
+            pass
+
+    def _stderr_text(self):
+        values = []
+        while True:
+            try:
+                values.append(self._stderr.get_nowait())
+            except queue.Empty:
+                break
+        return safe_diagnostic(" ".join(value for value in values if value))
+
+    def _closed_error(self, method):
+        code = self.proc.poll() if self.proc else None
+        details = self._stderr_text()
+        parts = [f"退出码={code}" if code is not None else "进程状态未知"]
+        if details:
+            parts.append(details)
+        return BackendError(f"App Server 连接已关闭（{'; '.join(parts)}；请求={method}）")
+
     def _send(self, value):
         self.proc.stdin.write(json.dumps(value, ensure_ascii=False) + "\n")
         self.proc.stdin.flush()
@@ -137,7 +196,7 @@ class CodexBackend:
             except queue.Empty as exc:
                 raise BackendError("App Server 请求超时：" + method) from exc
             if message is None:
-                raise BackendError("App Server 连接已关闭")
+                raise self._closed_error(method)
             if message.get("id") != request_id:
                 if time.monotonic() > deadline:
                     raise BackendError("App Server 请求超时：" + method)
@@ -189,7 +248,7 @@ class CodexBackend:
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.wait(timeout=3)
-        for stream in (self.proc.stdin, self.proc.stdout):
+        for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
             if stream:
                 stream.close()
 
@@ -246,10 +305,11 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
         schema.write_text(json.dumps(output_schema), encoding="utf-8")
         output = temp / "result.json"
         args = [
-            binary, "exec", "--ephemeral", "--ignore-user-config",
+            binary, "exec", "--ephemeral",
             "--skip-git-repo-check", "--sandbox", "read-only", "-C", tmp,
             "--disable", "hooks", "--disable", "shell_tool",
             "--disable", "plugins", "--disable", "apps", "--disable", "multi_agent",
+            "-c", "notify=[]",
             "-m", config["model"], "-c", 'model_reasoning_effort="low"',
             "-c", "project_doc_max_bytes=0", "-c", "skills.max_context_tokens=1",
             "-c", "agents.enabled=false", "-c", 'web_search="disabled"',
@@ -275,7 +335,11 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
             usage, forbidden_tool = parse_usage(proc.stdout)
             status = "process_error"
             if proc.returncode or not output.exists():
-                raise BackendError("独立命名模型失败；请检查登录、模型配置和 doctor")
+                detail = safe_diagnostic(proc.stderr)
+                suffix = f"；{detail}" if detail else ""
+                raise BackendError(
+                    f"独立命名模型失败（退出码={proc.returncode}{suffix}）；请检查登录、模型配置和 doctor"
+                )
             status = "rejected_tool"
             if forbidden_tool:
                 raise BackendError("命名模型尝试调用工具，本次结果已丢弃")
@@ -289,6 +353,7 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
             raise BackendError("独立命名模型超时；原标题保留") from exc
         except OSError:
             status = "process_error"
+            # 保持原有 OSError 契约；Hook/doctor 外层会提供脱敏诊断。
             raise
         finally:
             if attempt:

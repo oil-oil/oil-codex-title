@@ -16,8 +16,12 @@ import time
 import unicodedata
 import uuid
 
-from codex_adapter import BackendError, ModelSkipped, CodexBackend, find_codex, generate_title, process_options
+from codex_adapter import (
+    BackendError, ModelSkipped, CodexBackend, find_codex, generate_title, process_options,
+    safe_diagnostic,
+)
 import file_lock
+import handoff
 from usage_ledger import usage_scope, usage_report
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +30,7 @@ DEFAULTS = {
     "model": "gpt-5.6-luna",
     "service_tier": "priority",
     "codex_bin": None,
+    "handoff_dir": None,
     "recent_turns": 5,
     "max_context_chars": 14000,
     "model_timeout_seconds": 100,
@@ -37,9 +42,13 @@ POLICY_VERSION = 8
 
 def data_dir():
     override = os.environ.get("OIL_CODEX_TITLE_DATA")
-    return Path(override).expanduser() if override else Path(
-        os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
-    ) / "oil-codex-title"
+    if override:
+        return Path(override).expanduser()
+    home = os.environ.get("CODEX_HOME")
+    if not home:
+        user_home = os.environ.get("USERPROFILE")
+        home = os.path.join(user_home, ".codex") if user_home else str(Path.home() / ".codex")
+    return Path(home) / "oil-codex-title"
 
 
 def read_json(path, default=None):
@@ -78,6 +87,8 @@ def load_config(root):
         raise ValueError("model 不能为空")
     if config["service_tier"] not in (None, "priority"):
         raise ValueError("service_tier 必须是 null（标准）或 priority（Fast）")
+    if config["handoff_dir"] is not None and not isinstance(config["handoff_dir"], str):
+        raise ValueError("handoff_dir 必须是字符串或 null")
     return config
 
 
@@ -455,33 +466,102 @@ def _process_thread(backend, generator, thread_id, root, config, *, apply=False,
         return result
 
 
+def _write_probe(root):
+    """检查 Hook 是否能写自己的审计目录，不触碰 Codex 数据库。"""
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        probe = root / ".doctor-write-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return {"status": "ok"}
+    except OSError as exc:
+        return {"status": "error", "error_type": type(exc).__name__,
+                "message": safe_diagnostic(exc)}
+
+
+def _error_info(exc):
+    return {"status": "error", "error_type": type(exc).__name__,
+            "message": safe_diagnostic(exc)}
+
+
 def doctor(binary, root, config, thread_id=None):
-    version = subprocess.run([binary, "--version"], capture_output=True, encoding="utf-8", timeout=10, **process_options())
-    output = {"codex_bin": binary, "version": version.stdout.strip(), "config": config,
-              "data_dir": str(root), "desktop_display": "not_verified"}
+    output = {
+        "codex_bin": binary,
+        "config": config,
+        "data_dir": str(root),
+        "desktop_display": "not_verified",
+        "execution": {
+            "python": sys.executable,
+            "platform": sys.platform,
+            "path_home_matches_userprofile": str(Path.home()) == os.environ.get("USERPROFILE", str(Path.home())),
+            "codex_home_set": bool(os.environ.get("CODEX_HOME")),
+        },
+        "data_dir_write": _write_probe(root),
+    }
+    try:
+        version = subprocess.run([binary, "--version"], capture_output=True, encoding="utf-8",
+                                 timeout=10, **process_options())
+        output["version"] = version.stdout.strip()
+        if version.returncode:
+            output["version_check"] = {"status": "error", "returncode": version.returncode,
+                                        "message": safe_diagnostic(version.stderr)}
+        else:
+            output["version_check"] = {"status": "ok"}
+    except (OSError, subprocess.SubprocessError) as exc:
+        output["version_check"] = _error_info(exc)
+        output["app_server"] = {"status": "not_checked", "reason": "version_check_failed"}
+        output["hook"] = {"status": "not_checked", "reason": "app_server_not_started"}
+        return output
+
     # 仅检查定义，不创建或恢复任何会话，因此不会触发 SessionStart/Stop。
-    with CodexBackend(binary, disable_hooks=False) as backend:
-        cwd = str(Path.cwd())
-        if thread_id:
-            thread = backend.read(valid_id(thread_id))
-            cwd = thread.get("cwd") or cwd
-            snap = snapshot(thread, config)
-            output["thread"] = {k: snap[k] for k in ("title", "latest_id", "has_messages")}
-        output["app_server"] = "ok"
-        try:
-            listing = backend.call("hooks/list", {"cwds": [cwd]})
-            definitions = [hook for entry in listing.get("data", []) for hook in entry.get("hooks", [])
-                           if (hook.get("pluginId") or "").split("@")[0] == "oil-codex-title"]
-            ready = any(h.get("enabled") and h.get("trustStatus") in ("trusted", "managed")
-                        for h in definitions)
-            output["hook"] = {
-                "status": "ready" if ready else "needs_trust_or_enable" if definitions else "not_loaded",
-                "definitions": [{k: h.get(k) for k in ("eventName", "enabled", "trustStatus", "sourcePath")}
-                                for h in definitions],
-            }
-        except BackendError:
-            output["hook"] = {"status": "inspection_unsupported"}
+    try:
+        with CodexBackend(binary, disable_hooks=False) as backend:
+            cwd = str(Path.cwd())
+            if thread_id:
+                thread = backend.read(valid_id(thread_id))
+                cwd = thread.get("cwd") or cwd
+                snap = snapshot(thread, config)
+                output["thread"] = {k: snap[k] for k in ("title", "latest_id", "has_messages")}
+            output["app_server"] = {"status": "ok"}
+            try:
+                listing = backend.call("hooks/list", {"cwds": [cwd]})
+                definitions = [hook for entry in listing.get("data", []) for hook in entry.get("hooks", [])
+                               if (hook.get("pluginId") or "").split("@")[0] == "oil-codex-title"]
+                ready = any(h.get("enabled") and h.get("trustStatus") in ("trusted", "managed")
+                            for h in definitions)
+                output["hook"] = {
+                    "status": "loaded_enabled_trusted" if ready else "needs_trust_or_enable" if definitions else "not_loaded",
+                    "definitions": [{k: h.get(k) for k in ("eventName", "enabled", "trustStatus", "sourcePath")}
+                                    for h in definitions],
+                    "natural_stop": "not_verified",
+                }
+            except BackendError as exc:
+                output["hook"] = {"status": "inspection_unsupported", "message": safe_diagnostic(exc),
+                                    "natural_stop": "not_verified"}
+    except (BackendError, OSError, subprocess.SubprocessError) as exc:
+        output["app_server"] = _error_info(exc)
+        output["hook"] = {"status": "not_checked", "reason": "app_server_unavailable",
+                           "message": safe_diagnostic(exc), "natural_stop": "not_verified"}
     return output
+
+
+def run_naming(binary, root, config, thread_id, turn_id=None):
+    """Hook 与移交 worker 共用的命名执行体；只写标题元数据。"""
+    with CodexBackend(binary) as backend:
+        result = process_thread(
+            backend, lambda context: limited_title(binary, root, config, context,
+                before_model=lambda: ensure_title_active(backend, thread_id, root)),
+            thread_id, root, config, apply=True, event_turn=turn_id,
+        )
+    if result["status"] not in ("renamed", "kept"):
+        audit(root, thread_id, result)
+    return result
+
+
+def worker_naming(binary, root, config, payload):
+    """用户身份 worker 侧：请求只带标识，命名流程与 Hook 完全一致。"""
+    turn_id = valid_id(payload["turn_id"]) if payload.get("turn_id") else None
+    return run_naming(binary, root, config, valid_id(payload["thread_id"]), turn_id)
 
 
 def main():
@@ -492,6 +572,7 @@ def main():
     parser = argparse.ArgumentParser(description="独立模型驱动的 Codex 话题命名")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("hook", help="读取 Stop Hook stdin；保持宿主输出为空 JSON")
+    sub.add_parser("worker", help="以用户身份处理沙箱 Hook 移交的命名请求")
     p = sub.add_parser("doctor", help="只读检查运行环境")
     p.add_argument("--thread")
     sub.add_parser("status", help="显示配置和本地记录数量")
@@ -523,6 +604,17 @@ def main():
                 return 0
             thread_id = valid_id(event["session_id"])
             turn_id = valid_id(event["turn_id"])
+            # 先记一条极小的到达证据；这样“没有改名”可区分为未触发、
+            # 启动失败或业务保护分支。绝不保存事件原文或对话内容。
+            try:
+                audit(root, thread_id, {"status": "hook_received", "event": "Stop"})
+            except Exception:
+                pass
+            # 同步 Stop Hook 必须秒回：投递请求后立刻拉起脱离进程的 worker，
+            # 命名在后台完成（见 docs/Windows沙箱移交.md）。
+            handoff.hand_off(config, thread_id, turn_id)
+            handoff.spawn_worker(ROOT / "scripts" / "oil_codex_title.py")
+            return 0
         if args.command in ("pause", "resume", "configure"):
             config_path = root / "config.json"
             changes = read_json(config_path)
@@ -551,6 +643,12 @@ def main():
         binary = find_codex(config["codex_bin"])
         if args.command == "doctor":
             result = doctor(binary, root, config, args.thread)
+        elif args.command == "worker":
+            result = handoff.run_worker(
+                handoff.queue_dir(config),
+                lambda payload: worker_naming(binary, root, config, payload))
+        elif is_hook:
+            result = run_naming(binary, root, config, thread_id, turn_id)
         else:
             thread_id = thread_id or valid_id(args.thread_id)
             with CodexBackend(binary) as backend:
@@ -570,17 +668,15 @@ def main():
                     result = process_thread(
                         backend, lambda context: limited_title(binary, root, config, context,
                             before_model=lambda: ensure_title_active(backend, thread_id, root)),
-                        thread_id, root, config, apply=is_hook or args.apply,
-                        event_turn=turn_id if is_hook else None,
+                        thread_id, root, config, apply=args.apply, event_turn=None,
                     )
-                    if is_hook and result["status"] not in ("renamed", "kept"):
-                        audit(root, thread_id, result)
         if not is_hook:
             print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:
         error = {"status": "error", "error_type": type(exc).__name__}
         if is_hook:
+            error["message"] = safe_diagnostic(exc)
             try:
                 audit(root, thread_id or "hook", error)
             except Exception:

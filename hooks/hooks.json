@@ -7,8 +7,8 @@
           {
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/scripts/oil_codex_title.py\" hook",
-            "async": true,
-            "timeout": 500,
+            "async": false,
+            "timeout": 20,
             "commandWindows": "py -3 -X utf8 \"${PLUGIN_ROOT}/scripts/oil_codex_title.py\" hook"
           }
         ]
