@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)][string]$QueueDir,
     [Parameter(Mandatory=$true)][string]$TaskName,
     [Parameter(Mandatory=$true)][string]$PythonPath,
