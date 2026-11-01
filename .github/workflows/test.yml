@@ -36,4 +36,4 @@ jobs:
         run: npm install -g @openai/codex
       - name: Windows 原生 CLI 连接检查（不调用模型）
         if: runner.os == 'Windows' && matrix.python == '3.13'
-        run: python scripts/oil_codex_title.py doctor
+        run: python scripts/mogoo_codex_title.py doctor

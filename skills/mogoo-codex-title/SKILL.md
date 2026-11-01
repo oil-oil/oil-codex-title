@@ -1,11 +1,11 @@
 ---
-name: oil-codex-title
-description: 管理 oil-codex-title 插件的话题自动命名和可选闲置归档，检查后台 Hook、预览或修改话题标题、暂停恢复、保护标题或话题、配置定期归档。当用户要求管理 Codex 话题名称、预览闲置话题归档或配置本插件时使用；不用于文章标题、视频标题、文件重命名，也不在普通对话结束时由主 Agent 主动执行。
+name: mogoo-codex-title
+description: 管理 mogoo-codex-title 插件的话题自动命名和可选闲置归档，检查后台 Hook、预览或修改话题标题、暂停恢复、保护标题或话题、配置定期归档。当用户要求管理 Codex 话题名称、预览闲置话题归档或配置本插件时使用；不用于文章标题、视频标题、文件重命名，也不在普通对话结束时由主 Agent 主动执行。
 metadata:
   compatibility: Codex 本地插件专用；需要 Python 3.10+、已登录且支持当前话题存储的 Codex CLI。macOS 已实测；Windows 与 Linux 已通过自动化测试，桌面完整流程待实测；云端不支持后台入口。
 ---
 
-# oil-codex-title
+# mogoo-codex-title
 
 管理后台命名流程。主对话负责用户明确请求的设置与操作；自动命名由独立的 Stop Hook 执行。
 
@@ -21,10 +21,18 @@ Windows 下将示例的 `python3` 换成 `py -3`，需要已安装 Python Launch
 
 1. 执行 `python3 <入口> doctor`，检查 Python、Codex 路径和 App Server。
 2. 用户提供话题时，追加 `--thread <话题 ID>` 验证读取兼容性。
-3. 需要配置时，执行 `configure --model <模型 ID> --service-tier fast` 或 `--service-tier standard`；修正可执行文件使用 `configure --codex-bin <路径>`。模型和档位应来自用户选择或当前可用列表，不猜模型名。默认 Luna Fast，Spark 使用 standard。
+3. 需要配置时，执行 `configure --model <模型 ID> --service-tier fast` 或 `--service-tier standard`；指定优先入口使用 `configure --codex-bin <路径>`，恢复自动查找使用 `configure --codex-bin auto`。后台每次重新查找，旧入口失效时回退到可启动的 CLI；Windows 也检查当前用户的 npm 与桌面安装目录。模型和档位应来自用户选择或当前可用列表，不猜模型名。默认 Luna Fast，Spark 使用 standard。
 4. 安装及信任步骤见插件根目录的 `README.md`。只通过官方插件安装和 Hook 信任入口操作，不修改信任数据库，也不加绕过信任的参数。
 
+用户明确要求中转站时，读取插件根目录 `docs/使用与边界.md` 的「可选中转站配置」，用 `configure --provider relay --base-url <API基础地址> --api-key-env <密钥环境变量名> --model <模型ID>` 配置。密钥通过宿主环境提供，只保存变量名。默认官方模式保持原版行为；`configure --provider official` 切回已保存的官方模型与档位。`--model` 和 `--service-tier` 修改选中模式；中转站默认标准档位。`doctor` 的密钥存在检查和 App Server 就绪不能代替模型实测。
+
+用户要可视化配置时，运行 `settings --no-browser` 并保持本地服务运行，将输出 JSON 中的 `url` 用宿主浏览器打开。Windows 后台启动使用隐藏窗口。页面由用户选择并保存，与 Hook 共用配置；只打开页面不会切换模式。服务仅监听回环地址，停止后入口失效；完整行为见 `docs/使用与边界.md` 的「本地可视化设置」。
+
+Windows 页面提供「设置密钥」对话框，由用户输入和保存到当前用户环境变量；主 Agent 不读取或回传实际密钥。保存密钥不会切换模型服务或保存页面草稿，用户还需保存模式配置并完全重启 Codex。
+
 Hook 安装、启用、信任和实际成功运行是不同状态。`doctor` 成功不能证明 Hook 已自动触发。
+
+标题默认追加最后用户发言时间，格式为 ` · MM-DD HH:mm`，时间由程序从消息记录提取。用户要求显示或隐藏时，执行 `configure --title-time on` 或 `configure --title-time off`；它是官方和中转站共用的设置，在下一次正常标题检查生效，不解除手动或锁定保护。完整规则见插件根目录 `docs/使用与边界.md` 的「命名方式」。
 
 ## 改名与预览
 

@@ -1,0 +1,20 @@
+{
+  "name": "mogoo-codex-title",
+  "owner": {
+    "name": "mogoo"
+  },
+  "plugins": [
+    {
+      "name": "mogoo-codex-title",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

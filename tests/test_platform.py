@@ -19,6 +19,14 @@ ID = '12345678-1234-1234-1234-123456789012'
 
 
 class PlatformTests(unittest.TestCase):
+    def test_fork_publisher_matches_marketplace_owner(self):
+        manifest = json.loads((ROOT / '.codex-plugin/plugin.json').read_text(encoding='utf-8'))
+        marketplace = json.loads((ROOT / '.agents/plugins/marketplace.json').read_text(encoding='utf-8'))
+        publisher = marketplace['owner']['name']
+        self.assertEqual(publisher, 'mogoo')
+        self.assertEqual(manifest['interface']['developerName'], publisher)
+        self.assertEqual(manifest['author']['name'], publisher)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='title-test-')
         self.root = Path(self.tmp.name) / '中文 空格'
@@ -86,7 +94,10 @@ class PlatformTests(unittest.TestCase):
 
     def test_windows_native_path_is_preferred(self):
         exe = str(self.root / 'codex.exe')
-        with patch('codex_adapter.sys.platform', 'win32'), patch('codex_adapter.shutil.which', side_effect=lambda name: exe if name=='codex.exe' else None):
+        with patch('codex_adapter.sys', SimpleNamespace(platform='win32')), \
+             patch('codex_adapter.shutil.which', side_effect=lambda name: exe if name=='codex.exe' else None), \
+             patch('codex_adapter.process_options', return_value={}), \
+             patch('codex_adapter.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout='codex-cli 1.0.0')):
             self.assertEqual(find_codex(), exe)
 
     def test_windows_paths_cannot_leak_into_titles(self):

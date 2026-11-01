@@ -14,10 +14,25 @@ import tempfile
 import threading
 import time
 from usage_ledger import begin_attempt, parse_usage
+from model_config import effective_model_config
 
 
 class BackendError(RuntimeError):
-    pass
+    def __init__(self, message, *, diagnostic=None):
+        super().__init__(message)
+        self.diagnostic = diagnostic
+
+
+def diagnostic_category(value):
+    # 仅输出固定类别，不把模型 stderr、路径、认证头或提示词写入日志。
+    text = str(value or '').casefold()
+    groups = [('permission_denied', ('access denied', 'permission denied', 'wsaeacces')),
+              ('authentication_failed', ('unauthorized', '401', 'authentication failed')),
+              ('forbidden', ('forbidden', '403')),
+              ('skills_budget', ('skills context budget',)),
+              ('model_unavailable', ('model not found', 'unsupported model', 'model_not_found')),
+              ('connection_failed', ('connection refused', 'failed to connect', 'timed out'))]
+    return next((name for name, patterns in groups if any(part in text for part in patterns)), 'unknown')
 
 
 class ModelSkipped(BackendError):
@@ -54,27 +69,61 @@ def windows_binary(path):
     raise BackendError("未找到 npm 入口对应的 codex.exe；请重装 Codex CLI 或通过 configure --codex-bin 指定原生路径")
 
 
-def find_codex(explicit: str | None = None) -> str:
-    if explicit:
-        resolved = shutil.which(explicit)
-        if resolved:
-            return windows_binary(resolved) if sys.platform == "win32" else resolved
-        raise BackendError("配置的 Codex 可执行文件不存在")
+def _codex_candidates():
+    """只查找 PATH 和当前用户的已知安装位置，不缓存桌面版本目录。"""
+    if sys.platform == "win32":
+        yield from ("codex.exe", "codex", "codex.cmd")
+        if os.environ.get("APPDATA"):
+            yield str(Path(os.environ["APPDATA"]) / "npm/codex.cmd")
+        if os.environ.get("LOCALAPPDATA"):
+            base = Path(os.environ["LOCALAPPDATA"]) / "OpenAI/Codex/bin"
+            yield str(base / "codex.exe")
+            versions = []
+            try:
+                for candidate in base.glob("*/codex.exe"):
+                    try:
+                        versions.append((candidate.stat().st_mtime_ns, str(candidate)))
+                    except OSError:
+                        continue  # 更新过程可能刚好清理旧版本。
+            except OSError:
+                pass
+            yield from (path for _, path in sorted(versions, reverse=True))
+        return
     if sys.platform == "darwin":
         for base in (Path("/Applications"), Path.home() / "Applications"):
             for app in ("ChatGPT.app", "Codex.app"):
-                candidate = base / app / "Contents/Resources/codex"
-                if candidate.is_file() and os.access(candidate, os.X_OK):
-                    return str(candidate)
-    if sys.platform == "win32":
-        path = shutil.which("codex.exe") or shutil.which("codex")
-        if path:
-            return windows_binary(path)
-        raise BackendError("未找到 Windows Codex CLI；请将 codex.exe 加入 PATH，或通过 configure --codex-bin 指定路径")
-    path = shutil.which("codex")
-    if not path:
-        raise BackendError("未找到 Codex；请安装并登录，或配置 codex_bin")
-    return path
+                yield str(base / app / "Contents/Resources/codex")
+    yield "codex"
+
+
+def find_codex(explicit: str | None = None, *, allow_fallback: bool = True) -> str:
+    """优先使用有效的指定入口；入口失效后重新发现并验证可启动的 CLI。"""
+    def candidates():
+        if explicit:
+            yield explicit
+        if not explicit or allow_fallback:
+            yield from _codex_candidates()
+
+    seen = set()
+    for entry in candidates():
+        try:
+            resolved = shutil.which(entry)
+            if not resolved:
+                raise BackendError("配置的 Codex 可执行文件不存在")
+            binary = windows_binary(resolved) if sys.platform == "win32" else resolved
+            key = os.path.normcase(str(Path(binary).resolve()))
+            if key in seen:
+                continue
+            seen.add(key)
+            version = subprocess.run([binary, "--version"], capture_output=True,
+                encoding="utf-8", errors="replace", timeout=3, **process_options())
+            if version.returncode or not re.match(r"^codex-cli\s+\S+", version.stdout.strip()):
+                raise BackendError("Codex 程序版本检查失败")
+            return binary
+        except (BackendError, OSError, subprocess.SubprocessError) as exc:
+            if explicit and not allow_fallback:
+                raise BackendError("指定的 Codex 入口不可用；请检查路径或使用 --codex-bin auto") from exc
+    raise BackendError("未找到可用的 Codex 程序；请安装 Codex CLI，或通过 configure --codex-bin 指定路径")
 
 
 def worker_env() -> dict[str, str]:
@@ -82,6 +131,8 @@ def worker_env() -> dict[str, str]:
     for key in ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_APP_TOOLS_PIPE_PATH"):
         env.pop(key, None)
     env["OIL_CODEX_TITLE_WORKER"] = "1"
+    if sys.platform == 'win32' and not env.get('CODEX_HOME') and env.get('USERPROFILE'):
+        env['CODEX_HOME'] = str(Path(env['USERPROFILE']) / '.codex')
     return env
 
 
@@ -94,17 +145,19 @@ class CodexBackend:
         self.messages = queue.Queue()
         self.counter = 0
         self.disable_hooks = disable_hooks
+        self.diagnostics = queue.Queue()
 
     def __enter__(self):
         self.proc = subprocess.Popen(
             [self.binary, "app-server"] + (["--disable", "hooks"] if self.disable_hooks else []),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             encoding="utf-8", env=worker_env(), **process_options(),
         )
         threading.Thread(target=self._reader, daemon=True).start()
+        threading.Thread(target=self._stderr_reader, daemon=True).start()
         try:
             self.call("initialize", {
-                "clientInfo": {"name": "oil-codex-title", "version": "0.1.0"},
+                "clientInfo": {"name": "mogoo-codex-title", "version": "0.1.0"},
                 "capabilities": {"experimentalApi": True},
             })
             self._send({"method": "initialized"})
@@ -126,6 +179,29 @@ class CodexBackend:
         self.proc.stdin.write(json.dumps(value, ensure_ascii=False) + "\n")
         self.proc.stdin.flush()
 
+    def _stderr_reader(self):
+        try:
+            for line in self.proc.stderr:
+                self.diagnostics.put(diagnostic_category(line))
+                while self.diagnostics.qsize() > 8:
+                    try:
+                        self.diagnostics.get_nowait()
+                    except queue.Empty:
+                        break
+        except (OSError, ValueError):
+            pass
+
+    def _closed_error(self):
+        kinds = []
+        while True:
+            try:
+                kinds.append(self.diagnostics.get_nowait())
+            except queue.Empty:
+                break
+        kind = next((value for value in kinds if value != 'unknown'), 'unknown')
+        code = self.proc.poll() if self.proc else None
+        return BackendError(f'App Server 连接已关闭（退出码={code}，类别={kind}）', diagnostic=kind)
+
     def call(self, method, params):
         self.counter += 1
         request_id = self.counter
@@ -137,7 +213,7 @@ class CodexBackend:
             except queue.Empty as exc:
                 raise BackendError("App Server 请求超时：" + method) from exc
             if message is None:
-                raise BackendError("App Server 连接已关闭")
+                raise self._closed_error()
             if message.get("id") != request_id:
                 if time.monotonic() > deadline:
                     raise BackendError("App Server 请求超时：" + method)
@@ -189,7 +265,7 @@ class CodexBackend:
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.wait(timeout=3)
-        for stream in (self.proc.stdin, self.proc.stdout):
+        for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
             if stream:
                 stream.close()
 
@@ -239,8 +315,13 @@ def _generate_title_once(binary, config, context, plugin_root, *, before_model=N
 def generate_json(binary, config, context, policy, output_schema, *, before_model=None):
     """隔离的无工具临时模型，供命名和归档评估共用。"""
     deadline = time.monotonic() + config["model_timeout_seconds"]
-    # 复用当前登录；不复制凭据，不恢复原会话，不保留独立会话记录。
-    with tempfile.TemporaryDirectory(prefix="oil-codex-title-") as tmp:
+    config = effective_model_config(config)
+    env = worker_env()
+    relay = config.get("relay") if config.get("provider") == "relay" else None
+    if relay and not env.get(relay["api_key_env"], "").strip():
+        raise BackendError("中转站密钥环境变量未设置：" + relay["api_key_env"])
+    # 官方复用登录，中转站只继承密钥环境变量；不恢复原会话或保留独立会话记录。
+    with tempfile.TemporaryDirectory(prefix="mogoo-codex-title-") as tmp:
         temp = Path(tmp)
         schema = temp / "schema.json"
         schema.write_text(json.dumps(output_schema), encoding="utf-8")
@@ -251,13 +332,23 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
             "--disable", "hooks", "--disable", "shell_tool",
             "--disable", "plugins", "--disable", "apps", "--disable", "multi_agent",
             "-m", config["model"], "-c", 'model_reasoning_effort="low"',
-            "-c", "project_doc_max_bytes=0", "-c", "skills.max_context_tokens=1",
+            "-c", "project_doc_max_bytes=0",
             "-c", "agents.enabled=false", "-c", 'web_search="disabled"',
+            "-c", "features.goals=false", "-c", "features.view_image=false", "-c", "tools.view_image=false",
             "-c", "apps._default.enabled=false",
             "-c", "model_instructions_file=" + json.dumps(str(policy)),
             "--output-schema", str(schema), "--output-last-message", str(output),
             "--json", "-",
         ]
+        if relay:
+            provider = {"name": "mogoo-codex-title relay", "base_url": relay["base_url"],
+                        "env_key": relay["api_key_env"], "wire_api": "responses",
+                        "requires_openai_auth": False, "supports_websockets": False}
+            # -c 的值是 TOML；各字符串用 JSON 编码，避免地址或模型名改变参数结构。
+            table = "{ " + ", ".join(key + " = " + json.dumps(value, ensure_ascii=False)
+                                    for key, value in provider.items()) + " }"
+            args[2:2] = ["-c", 'model_provider="oil_title_relay"',
+                         "-c", "model_providers.oil_title_relay=" + table]
         if config.get("service_tier"):
             args[2:2] = ["-c", "service_tier=" + json.dumps(config["service_tier"])]
         # 配额等待和每次内部重试之后，紧接真实模型进程启动前复核。
@@ -270,12 +361,13 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
         usage, status = {}, "interrupted"
         try:
             proc = subprocess.run(args, input=json.dumps(context, ensure_ascii=False),
-                                  capture_output=True, encoding="utf-8", env=worker_env(),
+                                  capture_output=True, encoding="utf-8", env=env,
                                   timeout=remaining, **process_options())
             usage, forbidden_tool = parse_usage(proc.stdout)
             status = "process_error"
             if proc.returncode or not output.exists():
-                raise BackendError("独立命名模型失败；请检查登录、模型配置和 doctor")
+                kind = diagnostic_category(getattr(proc, 'stderr', ''))
+                raise BackendError(f'独立命名模型失败（退出码={proc.returncode}，类别={kind}）；请检查 doctor', diagnostic=kind)
             status = "rejected_tool"
             if forbidden_tool:
                 raise BackendError("命名模型尝试调用工具，本次结果已丢弃")

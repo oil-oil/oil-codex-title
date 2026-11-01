@@ -16,20 +16,29 @@ import time
 import unicodedata
 import uuid
 
-from codex_adapter import BackendError, ModelSkipped, CodexBackend, find_codex, generate_title, process_options
+from codex_adapter import BackendError, ModelSkipped, CodexBackend, find_codex, generate_title, process_options, worker_env
 import file_lock
 from usage_ledger import usage_scope, usage_report
+from model_config import validate_model_config, effective_model_config
+from title_time import display_title, managed_base_title
+import handoff
+from worker_identity import owner_process
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = {
     "enabled": True,
     "model": "gpt-5.6-luna",
     "service_tier": "priority",
+    "provider": "official",
+    "relay": None,
     "codex_bin": None,
     "recent_turns": 5,
     "max_context_chars": 14000,
     "model_timeout_seconds": 100,
     "max_parallel_workers": 2,
+    "show_last_user_time": True,
+    "worker_owner_sid": None,
+    "worker_task_enabled": False,
 }
 EMOJI = ("🎬", "🧩", "🔎", "📝", "📅", "🎨", "⚙️", "💬")
 POLICY_VERSION = 8
@@ -38,7 +47,7 @@ POLICY_VERSION = 8
 def data_dir():
     override = os.environ.get("OIL_CODEX_TITLE_DATA")
     return Path(override).expanduser() if override else Path(
-        os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+        os.environ.get("CODEX_HOME") or str(Path(os.environ.get("USERPROFILE", str(Path.home()))) / ".codex")
     ) / "oil-codex-title"
 
 
@@ -66,10 +75,16 @@ def atomic_json(path, value):
             os.unlink(filename)
 
 
-def load_config(root):
-    config = DEFAULTS | read_json(root / "config.json")
+def validate_config(config):
     if not isinstance(config["enabled"], bool):
         raise ValueError("enabled 必须是布尔值")
+    if not isinstance(config["show_last_user_time"], bool):
+        raise ValueError("show_last_user_time 必须是布尔值")
+    if not isinstance(config["worker_task_enabled"], bool):
+        raise ValueError("worker_task_enabled 必须是布尔值")
+    if config['worker_owner_sid'] is not None and not (
+        isinstance(config['worker_owner_sid'], str) and re.fullmatch(r'S-\d+(?:-\d+)+', config['worker_owner_sid'])):
+        raise ValueError('worker_owner_sid 必须是 Windows SID 或 null')
     for key, lower, upper in (("recent_turns", 3, 5), ("max_context_chars", 3000, 20000),
                               ("model_timeout_seconds", 10, 110), ("max_parallel_workers", 1, 8)):
         if type(config[key]) is not int or not lower <= config[key] <= upper:
@@ -78,7 +93,68 @@ def load_config(root):
         raise ValueError("model 不能为空")
     if config["service_tier"] not in (None, "priority"):
         raise ValueError("service_tier 必须是 null（标准）或 priority（Fast）")
+    validate_model_config(config)
     return config
+
+
+def load_config(root):
+    return validate_config(DEFAULTS | read_json(root / "config.json"))
+
+
+def model_config_changes(config, saved, *, provider=None, model=None, service_tier=None,
+                         base_url=None, api_key_env=None):
+    """命令行和设置页共用修改规则，保留另一模式与未知顶层字段。"""
+    changes = dict(saved)
+    provider = provider or config["provider"]
+    if provider == "official" and (base_url is not None or api_key_env is not None):
+        raise ValueError("中转站参数需要 --provider relay")
+    target = changes
+    if provider == "relay":
+        target = dict(config["relay"] or {})
+        if base_url is not None:
+            target["base_url"] = base_url
+        if api_key_env is not None:
+            target["api_key_env"] = api_key_env
+        changes["relay"] = target
+    changes["provider"] = provider
+    if model is not None:
+        target["model"] = model
+        previous = (config["relay"] or {}).get("model") if provider == "relay" else config["model"]
+        if model != previous and service_tier is None:
+            target["service_tier"] = None
+    if service_tier is not None:
+        if service_tier not in ("standard", "fast"):
+            raise ValueError("service_tier 必须是 standard 或 fast")
+        target["service_tier"] = "priority" if service_tier == "fast" else None
+    validate_config(DEFAULTS | changes)
+    return changes
+
+
+def update_config(root, command, args=None):
+    with thread_lock(root, "config", wait_seconds=3) as acquired:
+        if not acquired:
+            raise BackendError("配置正在保存，请稍后重试")
+        config = load_config(root)
+        saved = read_json(root / "config.json")
+        if command in ("pause", "resume"):
+            saved["enabled"] = command == "resume"
+        else:
+            saved = model_config_changes(config, saved, provider=args.provider, model=args.model,
+                service_tier=args.service_tier, base_url=args.base_url, api_key_env=args.api_key_env)
+            if args.codex_bin:
+                if args.codex_bin == "auto":
+                    find_codex()
+                    saved["codex_bin"] = None
+                else:
+                    find_codex(args.codex_bin, allow_fallback=False)
+                    # 保留命令名或 npm 入口，每次运行再解析原生程序；相对路径需固定工作目录。
+                    entry = Path(args.codex_bin).expanduser()
+                    saved["codex_bin"] = str(entry.resolve()) if entry.is_absolute() or entry.parent != Path(".") else str(entry)
+            if getattr(args, "title_time", None) is not None:
+                saved["show_last_user_time"] = args.title_time == "on"
+        validate_config(DEFAULTS | saved)
+        atomic_json(root / "config.json", saved)
+        return load_config(root)
 
 
 def valid_id(value):
@@ -212,7 +288,7 @@ def conflicting_titles(root, thread_id, candidate, scope_key=""):
             continue
         if state.get("scope_key", "") != scope_key:
             continue
-        other = state.get("last_seen_title")
+        other = state.get("last_base_title", state.get("last_seen_title"))
         if other == candidate:
             conflicts.add(other)
     return sorted(conflicts)
@@ -226,7 +302,7 @@ def item_text(item):
     return clean_text(item.get("text", ""))
 
 
-def snapshot(thread, config):
+def snapshot(thread, config, *, base_title=None):
     """只给命名模型用户与最终回答；用最新轮次 ID 检测生成期间的新活动。"""
     turns = thread.get("turns", [])
     effective = []
@@ -256,7 +332,7 @@ def snapshot(thread, config):
     if effective:
         original = next(m["text"] for m in effective[0]["messages"] if m["role"] == "user")[:800]
     latest_id = turns[-1]["id"] if turns else None
-    context = {"current_title": title, "project_hint": project_hint(thread),
+    context = {"current_title": title if base_title is None else base_title, "project_hint": project_hint(thread),
                "original_goal": original, "recent_turns": recent}
     signature = json.dumps({"policy_version": POLICY_VERSION, "project_hint": context["project_hint"],
                            "latest_id": latest_id, "effective": effective[-config["recent_turns"]:]},
@@ -303,7 +379,7 @@ def confirmation_only(thread, state, config):
     """仅在基线仍一致时跳过最多两轮纯确认；附件、遗漏轮次或规则升级均重新判断。"""
     if state.get("policy_version") != POLICY_VERSION or not state.get("last_fingerprint"):
         return 0
-    current = thread.get("name") or ""
+    current = managed_base_title(state, thread.get("name") or "")
     try:
         validate_candidate({"action": "rename", "title": current, "reason": ""}, current)
     except ValueError:
@@ -360,12 +436,15 @@ def _process_thread(backend, generator, thread_id, root, config, *, apply=False,
                 return {"status": pending}
         else:
             thread = backend.read(thread_id)
-        before = snapshot(thread, config)
+        base_before = managed_base_title(state, thread.get("name") or "")
+        before = snapshot(thread, config, base_title=base_before)
         if not before["has_messages"]:
             return {"status": "empty"}
         # 上次写入后进程被中断时，先核对待确认结果，避免误认作手工改名。
         if state.get("pending_title") == before["title"]:
             state.update(last_seen_title=before["title"], last_generated_title=before["title"])
+            if "pending_base_title" in state:
+                state["last_base_title"] = state.pop("pending_base_title")
             state.pop("pending_title", None)
             if apply:
                 atomic_json(path, state)
@@ -385,18 +464,20 @@ def _process_thread(backend, generator, thread_id, root, config, *, apply=False,
                 state.update(locked=True, lock_reason="检测到外部改名", last_seen_title=before["title"])
                 atomic_json(path, state)
             return {"status": "manual_title", "title": before["title"]}
-        if state.get("last_fingerprint") == before["fingerprint"]:
+        unchanged = state.get("last_fingerprint") == before["fingerprint"]
+        if unchanged and display_title(base_before, thread, config["show_last_user_time"]) == before["title"]:
             return {"status": "unchanged", "title": before["title"]}
-        skipped = confirmation_only(thread, state, config)
+        skipped = 0 if unchanged else confirmation_only(thread, state, config)
         try:
             ensure_title_active(backend, thread_id, root)
-            if skipped:
-                candidate, usage = {"action": "keep", "title": before["title"], "reason": "新增内容仅为确认，保留稳定标题"}, {}
+            if unchanged or skipped:
+                candidate, usage = {"action": "keep", "title": base_before,
+                                    "reason": "内容未变，仅更新发言时间" if unchanged else "新增内容仅为确认，保留稳定标题"}, {}
             else:
                 candidate, usage = generator(before["context"])
         except ModelSkipped as exc:
             return {"status": exc.status}
-        candidate = validate_candidate(candidate, before["title"])
+        candidate = validate_candidate(candidate, base_before)
         conflicts = conflicting_titles(root, thread_id, candidate["title"], before["scope_key"])
         if candidate["action"] == "rename" and conflicts:
             try:
@@ -405,12 +486,17 @@ def _process_thread(backend, generator, thread_id, root, config, *, apply=False,
                     "naming_feedback": "候选与已记录任务重名。用对话里真实的项目、模块或内容主题区分；无法区分就保留原名，不编造编号。"})
             except ModelSkipped as exc:
                 return {"status": exc.status, "usage": usage}
-            candidate = validate_candidate(candidate, before["title"])
+            candidate = validate_candidate(candidate, base_before)
             usage = {key: usage.get(key, 0) + retry_usage.get(key, 0)
                      for key in usage.keys() | retry_usage.keys()}
             if candidate["action"] == "rename" and conflicting_titles(root, thread_id, candidate["title"], before["scope_key"]):
                 return {"status": "ambiguous_title", "title": before["title"], "usage": usage}
         result = {"status": "preview", **candidate, "usage": usage}
+        result["title"] = display_title(candidate["title"], thread, config["show_last_user_time"])
+        if result["title"] != before["title"]:
+            result["action"] = "rename"
+        if candidate["title"] == base_before and result["title"] != before["title"]:
+            result["time_updated"] = True
         if skipped:
             result["skip_reason"] = "confirmation_only"
         if not apply:
@@ -424,31 +510,38 @@ def _process_thread(backend, generator, thread_id, root, config, *, apply=False,
             return {"status": "locked"}
         if backend.is_archived(thread_id):
             return {"status": "archived"}
-        after = snapshot(backend.read(thread_id), config)
+        fresh_thread = backend.read(thread_id)
+        after = snapshot(fresh_thread, config)
         if after["title"] != before["title"] or after["fingerprint"] != before["fingerprint"]:
             return {"status": "stale_result"}
         state.update(last_seen_title=before["title"], last_turn_id=before["latest_id"],
                      scope_key=before["scope_key"], updated_at=int(time.time()),
                      policy_version=POLICY_VERSION,
                      confirmation_skips=state.get("confirmation_skips", 0) + skipped if skipped else 0)
-        if candidate["action"] == "rename" and candidate["title"] != before["title"]:
-            state["pending_title"] = candidate["title"]
+        rendered = display_title(candidate["title"], fresh_thread, fresh_config["show_last_user_time"])
+        result["title"] = rendered
+        if rendered != before["title"]:
+            result["action"] = "rename"
+            state["pending_title"] = rendered
+            state["pending_base_title"] = candidate["title"]
             atomic_json(path, state)
             try:
-                backend.rename(thread_id, candidate["title"])
+                backend.rename(thread_id, rendered)
             except BackendError:
                 # 网络/进程错误可能发生在写入成功后，先读回确认，不盲目重试。
-                if snapshot(backend.read(thread_id), config)["title"] != candidate["title"]:
+                if snapshot(backend.read(thread_id), config)["title"] != rendered:
                     raise
             verified = snapshot(backend.read(thread_id), config)
-            if verified["title"] != candidate["title"]:
+            if verified["title"] != rendered:
                 raise BackendError("标题写入后核验不一致")
-            state.update(last_seen_title=candidate["title"], last_generated_title=candidate["title"])
+            state.update(last_seen_title=rendered, last_generated_title=rendered)
             state.pop("pending_title", None)
+            state.pop("pending_base_title", None)
             result["status"] = "renamed"
             result["verification"] = "metadata_only"
         else:
             result["status"] = "kept"
+        state["last_base_title"] = candidate["title"]
         state["last_fingerprint"] = before["fingerprint"]
         atomic_json(path, state)
         audit(root, thread_id, result)
@@ -459,6 +552,15 @@ def doctor(binary, root, config, thread_id=None):
     version = subprocess.run([binary, "--version"], capture_output=True, encoding="utf-8", timeout=10, **process_options())
     output = {"codex_bin": binary, "version": version.stdout.strip(), "config": config,
               "data_dir": str(root), "desktop_display": "not_verified"}
+    effective = effective_model_config(config)
+    output["model_connection"] = {"provider": config["provider"], "model": effective["model"],
+                                  "inference": "not_verified"}
+    output['handoff'] = {'owner_process': owner_process(config), 'task_enabled': config['worker_task_enabled'],
+                         'queue_dir': str(handoff.queue_dir(root)), 'natural_stop': 'not_verified'}
+    if config["provider"] == "relay":
+        env_key = config["relay"]["api_key_env"]
+        output["model_connection"].update(api_key_env=env_key,
+                                         api_key_present=bool(worker_env().get(env_key, "").strip()))
     # 仅检查定义，不创建或恢复任何会话，因此不会触发 SessionStart/Stop。
     with CodexBackend(binary, disable_hooks=False) as backend:
         cwd = str(Path.cwd())
@@ -471,7 +573,7 @@ def doctor(binary, root, config, thread_id=None):
         try:
             listing = backend.call("hooks/list", {"cwds": [cwd]})
             definitions = [hook for entry in listing.get("data", []) for hook in entry.get("hooks", [])
-                           if (hook.get("pluginId") or "").split("@")[0] == "oil-codex-title"]
+                           if (hook.get("pluginId") or "").split("@")[0] == "mogoo-codex-title"]
             ready = any(h.get("enabled") and h.get("trustStatus") in ("trusted", "managed")
                         for h in definitions)
             output["hook"] = {
@@ -484,6 +586,33 @@ def doctor(binary, root, config, thread_id=None):
     return output
 
 
+def run_naming(binary, root, config, thread_id, turn_id):
+    with CodexBackend(binary) as backend:
+        result = process_thread(backend, lambda context: limited_title(binary, root, config, context,
+            before_model=lambda: ensure_title_active(backend, thread_id, root)),
+            thread_id, root, config, apply=True, event_turn=turn_id)
+    audit(root, thread_id, {'status': 'worker_result', 'result_status': result['status']})
+    return result
+
+
+def run_worker(root, config):
+    if not owner_process(config):
+        raise BackendError('worker 不是已配置的用户身份，拒绝消费队列')
+    audit(root, 'worker', {'status': 'worker_started', 'owner_process': True})
+    def process_one(payload):
+        fresh = load_config(root)
+        from worker_setup import hydrate_relay_key
+        hydrate_relay_key(fresh)
+        try:
+            return run_naming(find_codex(fresh['codex_bin']), root, fresh,
+                              valid_id(payload['thread_id']), valid_id(payload['turn_id']))
+        except Exception as exc:
+            audit(root, payload['thread_id'], {'status': 'worker_error', 'error_type': type(exc).__name__,
+                                               'diagnostic': getattr(exc, 'diagnostic', None)})
+            raise
+    return handoff.run_worker(handoff.queue_dir(root), process_one)
+
+
 def main():
     # Hook 事件使用 UTF-8；不能依赖 Windows 当前代码页解释中文内容。
     for stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -492,16 +621,26 @@ def main():
     parser = argparse.ArgumentParser(description="独立模型驱动的 Codex 话题命名")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("hook", help="读取 Stop Hook stdin；保持宿主输出为空 JSON")
+    sub.add_parser('worker', help='以当前用户身份消费移交队列')
+    p = sub.add_parser('worker-setup', help='配置 Windows 当前用户的周期 worker，仅授权插件队列')
+    p.add_argument('--remove', action='store_true', help='移除本插件 worker 任务并撤销队列授权')
     p = sub.add_parser("doctor", help="只读检查运行环境")
     p.add_argument("--thread")
     sub.add_parser("status", help="显示配置和本地记录数量")
     sub.add_parser("usage", help="汇总新版独立模型用量；缓存包含在输入中")
     sub.add_parser("pause", help="暂停自动命名")
     sub.add_parser("resume", help="恢复自动命名")
+    p = sub.add_parser("settings", help="打开本地可视化设置页；关闭进程即停止服务")
+    p.add_argument("--port", type=int, default=0, help="本地端口，默认自动选择")
+    p.add_argument("--no-browser", action="store_true", help="只输出入口地址，不打开系统浏览器")
     p = sub.add_parser("configure", help="配置独立命名模型或兼容的可执行文件")
     p.add_argument("--model")
-    p.add_argument("--codex-bin")
+    p.add_argument("--codex-bin", help="指定 Codex 入口；auto 恢复每次运行时自动查找")
     p.add_argument("--service-tier", choices=("standard", "fast"))
+    p.add_argument("--provider", choices=("official", "relay"), help="默认官方；中转站需显式选择 relay")
+    p.add_argument("--base-url", help="中转站 Responses API 基础地址，例如 https://relay.example/v1")
+    p.add_argument("--api-key-env", help="保存中转站密钥的环境变量名；不要填写密钥值")
+    p.add_argument("--title-time", choices=("on", "off"), help="显示或隐藏最后用户发言时间，默认 on")
     for name in ("rename", "lock", "unlock"):
         p = sub.add_parser(name)
         p.add_argument("thread_id")
@@ -514,6 +653,9 @@ def main():
     try:
         if sys.version_info < (3, 10):
             raise BackendError("需要 Python 3.10 或更新版本")
+        if args.command == "settings":
+            from settings_server import serve_settings
+            return serve_settings(root, port=args.port, open_browser=not args.no_browser)
         config = load_config(root)
         if is_hook:
             if os.environ.get("OIL_CODEX_TITLE_WORKER") == "1" or not config["enabled"]:
@@ -523,23 +665,39 @@ def main():
                 return 0
             thread_id = valid_id(event["session_id"])
             turn_id = valid_id(event["turn_id"])
-        if args.command in ("pause", "resume", "configure"):
-            config_path = root / "config.json"
-            changes = read_json(config_path)
-            if args.command in ("pause", "resume"):
-                changes["enabled"] = args.command == "resume"
+            own = owner_process(config)
+            if not own and not config['worker_task_enabled']:
+                raise BackendError('当前 Hook 是沙箱身份；请先用当前用户运行 worker-setup')
+            delivered = handoff.submit(handoff.queue_dir(root), thread_id, turn_id)
+            if own:
+                launched = handoff.spawn_worker(ROOT / 'scripts/mogoo_codex_title.py')
+                launch_type = 'same_user_process'
             else:
-                if args.model:
-                    changes["model"] = args.model
-                    # 新模型未必支持 Fast；切换模型时不继承旧模型的服务档位。
-                    if args.model != config["model"] and not args.service_tier:
-                        changes["service_tier"] = None
-                if args.codex_bin:
-                    changes["codex_bin"] = find_codex(args.codex_bin)
-                if args.service_tier:
-                    changes["service_tier"] = "priority" if args.service_tier == "fast" else None
-            atomic_json(config_path, changes)
-            print(json.dumps(load_config(root), ensure_ascii=False))
+                launched = handoff.trigger_task(handoff.task_name(root))
+                launch_type = 'user_task'
+            try:
+                audit(root, thread_id, {'status': 'hook_queued', 'delivery': delivered['status'],
+                    'owner_process': own, 'launch_requested': launched, 'launch_type': launch_type})
+            except OSError:
+                pass
+            return 0
+        if args.command == 'worker':
+            print(json.dumps(run_worker(root, config), ensure_ascii=False))
+            return 0
+        if args.command == 'worker-setup':
+            from worker_setup import setup
+            report = setup(root, config, ROOT, remove=args.remove)
+            with thread_lock(root, 'config', wait_seconds=3) as acquired:
+                if not acquired:
+                    raise BackendError('配置正在保存，请重试 worker-setup')
+                saved = read_json(root / 'config.json')
+                saved.update(worker_owner_sid=report.pop('owner_sid'), worker_task_enabled=not args.remove)
+                validate_config(DEFAULTS | saved)
+                atomic_json(root / 'config.json', saved)
+            print(json.dumps(report, ensure_ascii=False))
+            return 0
+        if args.command in ("pause", "resume", "configure"):
+            print(json.dumps(update_config(root, args.command, args), ensure_ascii=False))
             return 0
         if args.command == "status":
             print(json.dumps({"config": config, "data_dir": str(root),

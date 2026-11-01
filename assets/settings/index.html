@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>mogoo-codex-title · 设置</title>
+  <link rel="stylesheet" href="/settings.css">
+  <script src="/settings.js" defer></script>
+</head>
+<body>
+  <main class="workspace">
+    <header class="brand"><span class="brand-mark" aria-hidden="true">m.</span><span>mogoo-codex-title</span><span class="local-label">本地设置</span></header>
+    <section class="intro"><p class="eyebrow">模型服务</p><h1>为话题命名，选择一个入口。</h1><p>官方账号或自己的中转站。选好后保存，下次命名即使用新配置。</p></section>
+    <div id="load-error" class="notice error" role="alert" hidden></div>
+    <form id="settings-form" hidden>
+      <fieldset class="providers"><legend class="sr-only">选择模型服务</legend>
+        <label class="provider-option"><input type="radio" name="provider" value="official"><span class="option-body"><span class="option-title">官方账号<span class="tag">默认</span></span><span class="option-description">复用 Codex 登录，沿用原版方式。</span></span><span class="radio-mark" aria-hidden="true"></span></label>
+        <label class="provider-option"><input type="radio" name="provider" value="relay"><span class="option-body"><span class="option-title">自定义中转站</span><span class="option-description">使用指定 API 地址与模型。</span></span><span class="radio-mark" aria-hidden="true"></span></label>
+      </fieldset>
+      <section class="configuration" aria-labelledby="configuration-title">
+        <div class="section-heading"><h2 id="configuration-title">官方模型</h2><span id="saved-mode" class="saved-mode"></span></div>
+        <div id="relay-fields" hidden>
+          <div class="field"><label for="base-url">API 基础地址</label><input id="base-url" type="url" placeholder="https://relay.example/v1" autocomplete="off" spellcheck="false"><p>需支持 Responses API、流式响应和 JSON Schema 输出。</p></div>
+          <div class="field"><label for="api-key-env">密钥环境变量名</label><div class="input-action"><input id="api-key-env" type="text" placeholder="OIL_TITLE_RELAY_KEY" autocomplete="off" spellcheck="false"><button id="set-key" type="button" class="secondary">设置密钥</button></div><p id="key-help">填写保存 API Key 的变量名，密钥留在环境变量中。</p></div>
+          <p id="key-status" class="key-status"></p>
+        </div>
+        <div class="field"><label for="model">模型 ID</label><input id="model" type="text" required autocomplete="off" spellcheck="false"><p id="model-help"></p></div>
+        <div class="tier-row"><div><label for="fast-tier">Fast 档位</label><p>仅在服务和模型支持时开启。更换模型默认回到标准档位。</p></div><label class="switch"><input id="fast-tier" type="checkbox" role="switch" aria-label="Fast 档位"><span aria-hidden="true"></span></label></div>
+        <div class="tier-row timestamp-row"><div><label for="title-time">显示最后发言时间</label><p>标题末尾追加用户最后发言的时间，例如 · 10-08 14:30，使用本机时区。</p></div><label class="switch"><input id="title-time" type="checkbox" role="switch" aria-label="显示最后发言时间"><span aria-hidden="true"></span></label></div>
+      </section>
+      <footer class="actions"><div><span id="save-status" role="status" aria-live="polite">配置已读取</span><p>选择模式后，点击保存才会切换。</p></div><div class="action-buttons"><button id="reload" type="button" class="secondary">重新读取</button><button id="save" type="submit" disabled>保存配置<span aria-hidden="true">↗</span></button></div></footer>
+    </form>
+    <aside class="footnote"><span class="footnote-dot" aria-hidden="true"></span><div><p>配置保存在本机，与后台自动命名共用。</p><code id="config-path"></code><p class="subnote">保存密钥后，请完全重启 Codex。手动修改环境变量后，也需重启设置服务。</p></div></aside>
+  </main>
+  <dialog id="key-dialog" aria-labelledby="key-dialog-title" aria-describedby="key-dialog-description">
+    <form id="key-form">
+      <div class="dialog-heading"><h2 id="key-dialog-title">设置中转站密钥</h2><button id="key-close" type="button" class="secondary" aria-label="关闭密钥对话框">关闭</button></div>
+      <p id="key-dialog-description" class="dialog-description">保存到 Windows 当前用户的环境变量。已有值会被替换，插件配置只保存变量名。</p>
+      <div class="field"><label for="key-target">环境变量名</label><input id="key-target" type="text" readonly></div>
+      <div class="field"><label for="key-value">API Key</label><input id="key-value" type="password" required maxlength="4096" autocomplete="off" spellcheck="false" placeholder="输入新的 API Key"><p>密钥通过本机接口保存，不会回传、记录到日志或存入插件配置。</p></div>
+      <p id="key-message" class="dialog-message" role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="key-cancel" type="button" class="secondary">取消</button><button id="key-save" type="submit">保存密钥</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
