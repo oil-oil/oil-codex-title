@@ -4,6 +4,8 @@
 
 ## 配置方式
 
+从 0.4.4 起，安装脚本保留带 BOM 的 UTF-8 编码，以兼容入口默认调用的 Windows PowerShell 5.1；PowerShell 7 也可读取。仅在 7 中解析通过不足以验证 5.1。源码的编码检查和安全执行回归可运行 `py -3 -m unittest discover -s tests -p test_worker_installer.py -v`；它们会替代任务计划和 ACL 写入，不改动真实任务。0.4.3 用户更新完整插件后，可重新执行 `worker-setup`，无需改用 PowerShell 7 绕过编码问题。
+
 先从 `mogoo-codex-title` 市场安装或更新本插件。以下命令在实际安装的插件目录执行；Windows 需要可用的 Python 3.10+：
 
 ```powershell
