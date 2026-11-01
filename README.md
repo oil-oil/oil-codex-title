@@ -1,4 +1,4 @@
-# oil-codex-title
+# mogoo-codex-title
 
 <p align="center">
   <img src="./assets/readme/hero.svg" width="840" alt="Codex 话题实时命名，更好区分。对比普通标题与带 emoji 的具体任务标题。">
@@ -40,7 +40,7 @@
 复制下面这段话发给 Codex：
 
 ```text
-帮我从 GitHub 仓库 MogooStudio/oil-codex-title 安装完整插件，使用仓库内的 mogoo-oil-title 插件市场，开启话题自动命名并检查是否生效。需要我在界面中信任 Hook 的步骤，请告诉我怎么操作。
+帮我从 GitHub 仓库 MogooStudio/oil-codex-title 安装完整插件，使用仓库内的 mogoo-codex-title 插件市场，开启话题自动命名并检查是否生效。需要我在界面中信任 Hook 的步骤，请告诉我怎么操作。
 ```
 
 安装后，在新话题里正常聊天即可。默认使用 Luna Fast，消耗当前 Codex 账号的模型额度。
@@ -49,14 +49,14 @@
 
 ```sh
 codex plugin marketplace add MogooStudio/oil-codex-title --ref main
-codex plugin add oil-codex-title@mogoo-oil-title
+codex plugin add mogoo-codex-title@mogoo-codex-title
 ```
 
 ### 后续更新
 
 ```sh
-codex plugin marketplace upgrade mogoo-oil-title
-codex plugin add oil-codex-title@mogoo-oil-title
+codex plugin marketplace upgrade mogoo-codex-title
+codex plugin add mogoo-codex-title@mogoo-codex-title
 ```
 
 安装和更新不会自动信任 Hook；请在 Codex 官方 Hook 管理界面检查并信任新定义。
@@ -66,20 +66,24 @@ codex plugin add oil-codex-title@mogoo-oil-title
 从 0.4.0 起，Hook 先把本轮检查交给后台 worker，再结束回调。若 Windows 的 Hook 运行在 Codex 沙箱身份下，还需配置当前用户的后台任务。可以直接对 Codex 说：
 
 ```text
-帮我配置 oil-codex-title 的 Windows 后台 worker，检查用户身份、队列权限和任务状态，并告诉我怎样重新信任新版 Hook。
+帮我配置 mogoo-codex-title 的 Windows 后台 worker，检查用户身份、队列权限和任务状态，并告诉我怎样重新信任新版 Hook。
 ```
 
 任务只处理本插件的标题队列，使用当前登录用户的身份；不会改变中转站 / 官方模式。升级到本版后需重新信任 Hook。配置命令、撤销方法和实际触发验收见 [Windows 后台队列说明](docs/Windows队列与worker.md)。
 
-### 从旧来源迁移
+### 从旧名称或来源迁移
 
-若已安装上游或本地来源的同名插件，应先移除旧市场中的同名条目，再卸载旧插件，避免市场刷新时重新加载旧 Hook。保留市场中的其他插件。以旧来源为 `personal` 为例，清理其 `marketplace.json` 条目后执行：
+从 0.4.3 起，插件、市场和管理技能统一使用 `mogoo-codex-title`。GitHub 仓库地址仍是 `MogooStudio/oil-codex-title`，原作者出处和许可继续保留。
+
+若已安装旧名称插件，先通过官方插件管理入口停用或卸载旧 Hook，再按上面的新市场安装命令安装，避免两个插件同时命名。旧 fork 的卸载命令为：
 
 ```sh
-codex plugin remove oil-codex-title@personal
+codex plugin remove oil-codex-title@mogoo-oil-title
 ```
 
-在钩子页面刷新并核对命令路径，应该只保留 `mogoo-oil-title` 来源。插件配置和密钥环境变量独立于安装目录，更新和迁移继续复用。
+其他来源按实际市场名卸载，例如 `oil-codex-title@personal`；通过官方市场管理入口处理不再使用的旧来源，保留其中其他插件。刷新钩子页面并信任新版定义，核对只启用 `mogoo-codex-title`。
+
+新旧命令共用原来的数据目录、模型配置、密钥环境变量、锁定状态和用量记录，旧的 `scripts/oil_codex_title.py` 仍可使用。已配置 Windows worker 的用户，安装后再执行一次新入口的 `worker-setup`，更新缓存查找逻辑；沿用原计划任务和队列，不另建一套任务。详见 [Windows 队列说明](docs/Windows队列与worker.md)。
 
 ## 发一句话切换
 
@@ -92,7 +96,7 @@ codex plugin remove oil-codex-title@personal
 | 查看当前模式 | 看看标题插件现在用哪种模式。 |
 | 打开图形化设置 | 打开标题插件设置页面。 |
 
-这里的「标题插件」指 `oil-codex-title`。也可以明确说「把 oil-codex-title 切换到中转站，使用之前保存的配置」。
+这里的「标题插件」指 `mogoo-codex-title`。也可以明确说「把 mogoo-codex-title 切换到中转站，使用之前保存的配置」。
 
 已保存中转站配置后，Codex 会复用对应的地址、模型、档位和密钥环境变量名，不需要重新填写；完成后会反馈当前模式。首次尚未配置中转站时，先通过下面的设置页面完成配置。
 
@@ -116,18 +120,18 @@ codex plugin remove oil-codex-title@personal
 
 ## 可视化设置
 
-直接对 Codex 说：**「打开 oil-codex-title 的设置页面。」**
+直接对 Codex 说：**「打开 mogoo-codex-title 的设置页面。」**
 
 也可以在插件目录启动。Windows：
 
 ```powershell
-py -3 scripts/oil_codex_title.py settings
+py -3 scripts/mogoo_codex_title.py settings
 ```
 
 macOS / Linux：
 
 ```sh
-python3 scripts/oil_codex_title.py settings
+python3 scripts/mogoo_codex_title.py settings
 ```
 
 程序会打开本地设置页，仅监听 `127.0.0.1`；关闭命令进程即停止服务。使用 `settings --no-browser` 可以只输出入口地址，让 Codex 打开到浏览器面板。
@@ -150,16 +154,16 @@ python3 scripts/oil_codex_title.py settings
 以下命令在插件目录运行，Windows 把 `python3` 换成 `py -3`。首次配置中转站前，先设置指定的密钥环境变量，并替换示例地址和模型名：
 
 ```sh
-python3 scripts/oil_codex_title.py configure --provider relay --base-url "https://relay.example/v1" --api-key-env OIL_TITLE_RELAY_KEY --model "你的模型ID"
+python3 scripts/mogoo_codex_title.py configure --provider relay --base-url "https://relay.example/v1" --api-key-env OIL_TITLE_RELAY_KEY --model "你的模型ID"
 ```
 
 之后可以在已保存的两种配置之间切换，或查看当前状态：
 
 ```sh
-python3 scripts/oil_codex_title.py configure --provider official
-python3 scripts/oil_codex_title.py configure --provider relay
-python3 scripts/oil_codex_title.py status
-python3 scripts/oil_codex_title.py doctor
+python3 scripts/mogoo_codex_title.py configure --provider official
+python3 scripts/mogoo_codex_title.py configure --provider relay
+python3 scripts/mogoo_codex_title.py status
+python3 scripts/mogoo_codex_title.py doctor
 ```
 
 `--model` 和 `--service-tier` 修改当前选中的模式，也可以在同一命令中通过 `--provider` 指定。中转站和模型支持 Fast 时，可执行 `configure --provider relay --service-tier fast`；使用 `--service-tier standard` 恢复标准档位。
@@ -175,8 +179,8 @@ python3 scripts/oil_codex_title.py doctor
 设置页提供「显示最后发言时间」开关，保存后在下一次标题检查生效。也可以对 Codex 说「隐藏标题后面的发言时间」或「显示标题后面的最后发言时间」。命令行：
 
 ```sh
-python3 scripts/oil_codex_title.py configure --title-time off
-python3 scripts/oil_codex_title.py configure --title-time on
+python3 scripts/mogoo_codex_title.py configure --title-time off
+python3 scripts/mogoo_codex_title.py configure --title-time on
 ```
 
 这是两种模型服务共用的标题显示设置。手动改名、锁定、暂停和归档保护优先；关闭时只移除本插件记录的时间后缀，用户自己写在标题中的日期属于正文。升级后仅处理正常触发的话题，不批量改名历史对话。

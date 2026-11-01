@@ -1,4 +1,4 @@
-"""定位插件中的归档程序。"""
+"""定位 mogoo-codex-title 插件中的归档程序。"""
 from pathlib import Path
 import runpy
 import sys

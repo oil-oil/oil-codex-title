@@ -573,7 +573,7 @@ def doctor(binary, root, config, thread_id=None):
         try:
             listing = backend.call("hooks/list", {"cwds": [cwd]})
             definitions = [hook for entry in listing.get("data", []) for hook in entry.get("hooks", [])
-                           if (hook.get("pluginId") or "").split("@")[0] == "oil-codex-title"]
+                           if (hook.get("pluginId") or "").split("@")[0] == "mogoo-codex-title"]
             ready = any(h.get("enabled") and h.get("trustStatus") in ("trusted", "managed")
                         for h in definitions)
             output["hook"] = {
@@ -670,7 +670,7 @@ def main():
                 raise BackendError('当前 Hook 是沙箱身份；请先用当前用户运行 worker-setup')
             delivered = handoff.submit(handoff.queue_dir(root), thread_id, turn_id)
             if own:
-                launched = handoff.spawn_worker(ROOT / 'scripts/oil_codex_title.py')
+                launched = handoff.spawn_worker(ROOT / 'scripts/mogoo_codex_title.py')
                 launch_type = 'same_user_process'
             else:
                 launched = handoff.trigger_task(handoff.task_name(root))

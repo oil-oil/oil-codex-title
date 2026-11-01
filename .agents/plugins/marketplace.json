@@ -1,11 +1,11 @@
 {
-  "name": "mogoo-oil-title",
+  "name": "mogoo-codex-title",
   "owner": {
     "name": "mogoo"
   },
   "plugins": [
     {
-      "name": "oil-codex-title",
+      "name": "mogoo-codex-title",
       "source": {
         "source": "local",
         "path": "./"

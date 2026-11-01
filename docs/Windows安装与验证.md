@@ -13,8 +13,8 @@ Windows 版本沿用 Python 实现，没有额外的文件锁依赖。当前已�
 在插件目录的 PowerShell 中运行：
 
 ```powershell
-py -3 scripts/oil_codex_title.py doctor
-py -3 scripts/oil_codex_title.py configure --codex-bin 'C:\Codex\codex.exe'
+py -3 scripts/mogoo_codex_title.py doctor
+py -3 scripts/mogoo_codex_title.py configure --codex-bin 'C:\Codex\codex.exe'
 ```
 
 默认每次运行重新查找，不固定桌面版的版本目录。顺序为有效的手动入口、PATH、当前用户的 npm 安装和 `%LOCALAPPDATA%\OpenAI\Codex\bin` 下的桌面程序；桌面版本按程序修改时间优先尝试较新的版本。每个候选通过无模型的 `--version` 检查，无法启动、超时或输出不符合 Codex CLI 的入口会被跳过。
@@ -24,8 +24,8 @@ py -3 scripts/oil_codex_title.py configure --codex-bin 'C:\Codex\codex.exe'
 已有固定路径可恢复自动查找：
 
 ```powershell
-py -3 scripts/oil_codex_title.py configure --codex-bin auto
-py -3 scripts/oil_codex_title.py doctor
+py -3 scripts/mogoo_codex_title.py configure --codex-bin auto
+py -3 scripts/mogoo_codex_title.py doctor
 ```
 
 版本检查只证明程序可以启动；App Server 兼容性、账号登录和模型调用仍分别验证。自动查找不会修改模型服务、密钥或 Hook 信任。

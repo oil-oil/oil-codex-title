@@ -60,6 +60,10 @@ class SettingsTests(unittest.TestCase):
         return self.request(method="PUT", data=payload)
 
     def test_static_page_and_assets_only_serve_allowlisted_paths(self):
+        code, page, _ = self.request("/", auth=False)
+        self.assertEqual(code, 200)
+        self.assertIn("<title>mogoo-codex-title · 设置</title>", page)
+        self.assertIn(">mogoo-codex-title</span>", page)
         for path in ("/", "/settings.js", "/settings.css"):
             code, value, headers = self.request(path, auth=False)
             self.assertEqual(code, 200)

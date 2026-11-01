@@ -6,10 +6,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/scripts/oil_codex_title.py\" hook",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/mogoo_codex_title.py\" hook",
             "async": false,
             "timeout": 20,
-            "commandWindows": "py -3 -X utf8 \"${PLUGIN_ROOT}/scripts/oil_codex_title.py\" hook"
+            "commandWindows": "py -3 -X utf8 \"${PLUGIN_ROOT}/scripts/mogoo_codex_title.py\" hook"
           }
         ]
       }

@@ -131,7 +131,7 @@ class HandoffTests(unittest.TestCase):
     def test_owner_hook_only_queues_and_starts_same_user_worker(self):
         code, output, spawn, task = self.hook()
         self.assertEqual((code, output), (0, '{}\n'))
-        spawn.assert_called_once()
+        spawn.assert_called_once_with(ROOT / 'scripts/mogoo_codex_title.py')
         task.assert_not_called()
         request, = (self.queue / 'pending').glob('*.json')
         self.assertNotIn('private-path', request.read_text())

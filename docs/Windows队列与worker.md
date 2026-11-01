@@ -4,14 +4,16 @@
 
 ## 配置方式
 
-先从 `mogoo-oil-title` 市场安装或更新本插件。以下命令在实际安装的插件目录执行；Windows 需要可用的 Python 3.10+：
+先从 `mogoo-codex-title` 市场安装或更新本插件。以下命令在实际安装的插件目录执行；Windows 需要可用的 Python 3.10+：
 
 ```powershell
-py -3 -X utf8 scripts/oil_codex_title.py worker-setup
-py -3 -X utf8 scripts/oil_codex_title.py doctor
+py -3 -X utf8 scripts/mogoo_codex_title.py worker-setup
+py -3 -X utf8 scripts/mogoo_codex_title.py doctor
 ```
 
-`worker-setup` 必须在当前登录用户身份下运行。它创建每分钟运行的计划任务，任务名称为 `MogooOilCodexTitleWorker-` 加数据目录的哈希；任务使用交互登录身份和普通权限，因此用户登出期间不消费队列。运行入口写在插件数据目录，更新后从 `mogoo-oil-title` 缓存选择支持队列的最新版本。
+`worker-setup` 必须在当前登录用户身份下运行。它创建每分钟运行的计划任务，任务名称为 `MogooOilCodexTitleWorker-` 加数据目录的哈希；任务使用交互登录身份和普通权限，因此用户登出期间不消费队列。运行入口写在插件数据目录，优先从 `mogoo-codex-title` 缓存选择支持队列且入口完整的最新版本，兼容旧市场中的新名称和 `mogoo-oil-title/oil-codex-title` 历史缓存。
+
+从 0.4.2 及更早版本改名迁移后，须在新安装目录重新执行一次 `worker-setup`，更新已经生成的 `worker_runner.py`；仅更新插件源码不会改变旧 runner。计划任务名称、ProgramData 队列目录和数据目录保留历史标识，以便覆盖更新同一个任务、继续处理原队列。先停用或卸载旧插件的 Hook，再启用并信任新定义，避免同时加载两套 Hook。
 
 Windows 队列位于 `%PROGRAMDATA%\MogooOilCodexTitle\<数据目录哈希>\queue`。安装器只向本机已有的 `CodexSandboxUsers` 组授予这个队列的修改权限，不扩大 `.codex` 目录权限，也不自动信任 Hook。若组不存在，返回的 `sandbox_queue_authorized` 为 `false`；这不能证明沙箱 Hook 能入队。任务或授权配置报错时，保留原标题并检查当前用户权限。
 
@@ -20,13 +22,13 @@ Windows 队列位于 `%PROGRAMDATA%\MogooOilCodexTitle\<数据目录哈希>\queu
 需要手动消费已入队的请求时，可在当前用户身份下运行：
 
 ```powershell
-py -3 -X utf8 scripts/oil_codex_title.py worker
+py -3 -X utf8 scripts/mogoo_codex_title.py worker
 ```
 
 撤销周期任务及队列的沙箱组授权：
 
 ```powershell
-py -3 -X utf8 scripts/oil_codex_title.py worker-setup --remove
+py -3 -X utf8 scripts/mogoo_codex_title.py worker-setup --remove
 ```
 
 撤销不删除队列或插件配置。同用户直接启动仍可工作；需要暂停所有自动命名时，使用 `pause` 或在官方界面禁用 Hook。
@@ -41,7 +43,7 @@ py -3 -X utf8 scripts/oil_codex_title.py worker-setup --remove
 
 ## 安装后验收
 
-新版 Hook 的同步方式和超时定义已改变，更新插件后须在 Codex 官方 Hook 管理界面重新信任。确认只加载 `mogoo-oil-title` 来源，再在正常对话中完成一轮，分别核对以下证据：
+新版 Hook 的同步方式和超时定义已改变，更新插件后须在 Codex 官方 Hook 管理界面重新信任。确认只加载 `mogoo-codex-title` 来源，再在正常对话中完成一轮，分别核对以下证据：
 
 1. `doctor` 的 Hook 状态与实际用户身份；`task_enabled` 只表示配置标记，不证明 Windows 任务当前存在或已运行。
 2. 计划任务的实际最近运行时间 / 结果和队列状态；仅显示「就绪」不足以证明消费成功。

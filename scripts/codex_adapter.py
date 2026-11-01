@@ -157,7 +157,7 @@ class CodexBackend:
         threading.Thread(target=self._stderr_reader, daemon=True).start()
         try:
             self.call("initialize", {
-                "clientInfo": {"name": "oil-codex-title", "version": "0.1.0"},
+                "clientInfo": {"name": "mogoo-codex-title", "version": "0.1.0"},
                 "capabilities": {"experimentalApi": True},
             })
             self._send({"method": "initialized"})
@@ -321,7 +321,7 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
     if relay and not env.get(relay["api_key_env"], "").strip():
         raise BackendError("中转站密钥环境变量未设置：" + relay["api_key_env"])
     # 官方复用登录，中转站只继承密钥环境变量；不恢复原会话或保留独立会话记录。
-    with tempfile.TemporaryDirectory(prefix="oil-codex-title-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="mogoo-codex-title-") as tmp:
         temp = Path(tmp)
         schema = temp / "schema.json"
         schema.write_text(json.dumps(output_schema), encoding="utf-8")
@@ -341,7 +341,7 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
             "--json", "-",
         ]
         if relay:
-            provider = {"name": "oil-codex-title relay", "base_url": relay["base_url"],
+            provider = {"name": "mogoo-codex-title relay", "base_url": relay["base_url"],
                         "env_key": relay["api_key_env"], "wire_api": "responses",
                         "requires_openai_auth": False, "supports_websockets": False}
             # -c 的值是 TOML；各字符串用 JSON 编码，避免地址或模型名改变参数结构。

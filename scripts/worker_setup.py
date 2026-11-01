@@ -17,19 +17,25 @@ os.environ['CODEX_HOME'] = str(home)
 os.environ['OIL_CODEX_TITLE_DATA'] = str(root)
 for name in ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_APP_TOOLS_PIPE_PATH'):
     os.environ.pop(name, None)
-cache = home / 'plugins/cache/mogoo-oil-title/oil-codex-title'
 choices = []
-for package in cache.glob('*'):
-    try:
-        meta = json.loads((package / '.codex-plugin/plugin.json').read_text(encoding='utf-8'))
-        match = re.fullmatch(r'(\\d+)\\.(\\d+)\\.(\\d+)(?:[-+].*)?', meta['version'])
-        if match and (package / 'scripts/handoff.py').is_file():
-            choices.append((tuple(map(int, match.groups())), package))
-    except (OSError, ValueError, KeyError):
-        pass
+for marketplace, name in (('mogoo-codex-title', 'mogoo-codex-title'),
+                          ('mogoo-oil-title', 'mogoo-codex-title'),
+                          ('mogoo-oil-title', 'oil-codex-title')):
+    cache = home / 'plugins/cache' / marketplace / name
+    for package in cache.glob('*'):
+        try:
+            meta = json.loads((package / '.codex-plugin/plugin.json').read_text(encoding='utf-8'))
+            match = re.fullmatch(r'(\\d+)\\.(\\d+)\\.(\\d+)(?:[-+].*)?', meta['version'])
+            entry = package / 'scripts/mogoo_codex_title.py'
+            if not entry.is_file():
+                entry = package / 'scripts/oil_codex_title.py'
+            if meta['name'] == name and match and (package / 'scripts/handoff.py').is_file() and entry.is_file():
+                choices.append((name == 'mogoo-codex-title', tuple(map(int, match.groups())), str(entry)))
+        except (OSError, ValueError, KeyError):
+            pass
 if choices:
-    entry = max(choices)[1] / 'scripts/oil_codex_title.py'
-    subprocess.run([sys.executable, '-X', 'utf8', str(entry), 'worker'], check=False)
+    entry = max(choices)[2]
+    subprocess.run([sys.executable, '-X', 'utf8', entry, 'worker'], check=False)
 '''
 
 
