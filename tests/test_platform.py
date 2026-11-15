@@ -100,7 +100,7 @@ class PlatformTests(unittest.TestCase):
              patch('codex_adapter.platform.machine', return_value='AMD64'), \
              patch('codex_adapter.shutil.which', side_effect=entries.get), \
              patch('codex_adapter.codex_responds', side_effect=lambda binary: binary != app_exe):
-            self.assertEqual(find_codex(), str(npm_exe))
+            self.assertEqual(Path(find_codex()).resolve(), npm_exe.resolve())
 
     def test_explicit_windows_binary_does_not_silently_fall_back(self):
         app_exe = str(self.root / 'WindowsApps' / 'codex.exe')

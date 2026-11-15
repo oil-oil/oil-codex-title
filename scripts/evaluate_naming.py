@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--live', action='store_true', help='允许实际调用 Luna Fast')
+    parser.add_argument('--live', action='store_true', help='允许实际调用 GPT-6 Luna Fast')
     parser.add_argument('--output', type=Path, default=ROOT / 'docs/naming-evaluation.json')
     parser.add_argument('--cases', type=Path, default=ROOT / 'tests/fixtures/naming_cases.json', help='合成案例文件，可单独评测语言等规则')
     parser.add_argument('--workers', type=int, default=4, choices=range(1,9))
@@ -55,7 +55,7 @@ def main():
               'cases':len(rows),'passed':sum(r['passed'] for r in rows),
               'model_cases':sum(bool(r.get('usage')) for r in rows),
               'median_seconds':round(statistics.median(r['seconds'] for r in rows),2),
-              'notice':'确定性问候过滤与 Luna 命名的合成案例单次检查，不代表普遍准确率，也不验证桌面显示。',
+              'notice':'确定性问候过滤与 GPT-6 Luna 命名的合成案例单次检查，不代表普遍准确率，也不验证桌面显示。',
               'results':rows}
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n', encoding='utf-8')

@@ -23,7 +23,7 @@ from usage_ledger import usage_scope, usage_report
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = {
     "enabled": True,
-    "model": "gpt-5.6-luna",
+    "model": "gpt-6-luna",
     "service_tier": "priority",
     "codex_bin": None,
     "recent_turns": 5,
