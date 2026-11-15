@@ -86,8 +86,34 @@ class PlatformTests(unittest.TestCase):
 
     def test_windows_native_path_is_preferred(self):
         exe = str(self.root / 'codex.exe')
-        with patch('codex_adapter.sys.platform', 'win32'), patch('codex_adapter.shutil.which', side_effect=lambda name: exe if name=='codex.exe' else None):
+        with patch('codex_adapter.sys.platform', 'win32'), \
+             patch('codex_adapter.shutil.which', side_effect=lambda name: exe if name=='codex.exe' else None), \
+             patch('codex_adapter.codex_responds', return_value=True):
             self.assertEqual(find_codex(), exe)
+
+    def test_windows_unlaunchable_app_binary_falls_back_to_npm(self):
+        app_exe = str(self.root / 'WindowsApps' / 'codex.exe')
+        npm_cmd = str(self.root / 'codex.cmd')
+        npm_exe = self.make_npm_binary('node_modules/@openai/codex/node_modules/@openai/codex-win32-x64')
+        entries = {'codex': app_exe, 'codex.cmd': npm_cmd, 'codex.exe': app_exe}
+        with patch('codex_adapter.sys.platform', 'win32'), \
+             patch('codex_adapter.platform.machine', return_value='AMD64'), \
+             patch('codex_adapter.shutil.which', side_effect=entries.get), \
+             patch('codex_adapter.codex_responds', side_effect=lambda binary: binary != app_exe):
+            self.assertEqual(Path(find_codex()).resolve(), npm_exe.resolve())
+
+    def test_explicit_windows_binary_does_not_silently_fall_back(self):
+        app_exe = str(self.root / 'WindowsApps' / 'codex.exe')
+        with patch('codex_adapter.sys.platform', 'win32'), \
+             patch('codex_adapter.shutil.which', return_value=app_exe), \
+             patch('codex_adapter.codex_responds', return_value=False):
+            with self.assertRaisesRegex(BackendError, '配置的 Codex CLI 无法执行'):
+                find_codex(app_exe)
+
+    def test_doctor_distinguishes_tested_version_from_minimum(self):
+        self.assertEqual(app.windows_cli_preflight('codex-cli 0.151.0')['version_relation'], 'older_than_tested')
+        self.assertEqual(app.windows_cli_preflight('codex-cli 0.155.0')['version_relation'], 'same_or_newer')
+        self.assertEqual(app.windows_cli_preflight('unexpected')['version_relation'], 'unknown')
 
     def test_windows_paths_cannot_leak_into_titles(self):
         for name in (r'🧩 C:\Users\example\app｜修复', r'🧩 \\server\private｜修复', '🧩 C:/Users/example/app｜修复'):
@@ -132,6 +158,11 @@ class PlatformTests(unittest.TestCase):
             self.assertNotIn("fixture-secret", " ".join(args))
             self.assertEqual(kwargs["env"]["OIL_CODEX_TITLE_PROVIDER_KEY"], "fixture-secret")
             filtered = (Path(kwargs["env"]["CODEX_HOME"]) / "config.toml").read_text(encoding="utf-8")
+            import tomllib
+            parsed = tomllib.loads(filtered)
+            self.assertEqual(parsed["model_provider"], "custom")
+            self.assertEqual(parsed["model_providers"]["custom"]["env_key"], "OIL_CODEX_TITLE_PROVIDER_KEY")
+            self.assertEqual(parsed["model_providers"]["custom"]["base_url"], "https://example.com/v1")
             self.assertIn('env_key', filtered)
             self.assertNotIn("fixture-secret", filtered)
             self.assertNotIn("mcp_servers", filtered)
@@ -143,6 +174,21 @@ class PlatformTests(unittest.TestCase):
         with patch.dict(os.environ, {"CODEX_HOME": str(user_home)}), patch("codex_adapter.subprocess.run", side_effect=fake_run):
             from codex_adapter import generate_json, SCHEMA
             generate_json("codex.exe", config, {"current_title":"旧标题"}, ROOT / "prompts/naming.md", SCHEMA)
+
+    @unittest.skipIf(sys.version_info < (3, 11), "第三方服务商配置使用 tomllib")
+    def test_custom_provider_missing_or_invalid_config_raises_redacted_error(self):
+        from codex_adapter import isolated_provider_env
+        for content in (None, "not = valid = toml ["):
+            with self.subTest(has_file=content is not None):
+                user_home = self.root / ("missing-codex" if content is None else "invalid-codex")
+                user_home.mkdir(exist_ok=True)
+                if content is not None:
+                    (user_home / "config.toml").write_text(content, encoding="utf-8")
+                with patch.dict(os.environ, {"CODEX_HOME": str(user_home)}):
+                    with self.assertRaises(BackendError) as raised:
+                        isolated_provider_env(self.root)
+                self.assertIn("config.toml", str(raised.exception))
+                self.assertNotIn(str(user_home), str(raised.exception))
 
     def test_fixture_evaluator_can_read_chinese_in_legacy_locale(self):
         env = os.environ | {'PYTHONUTF8':'0','PYTHONIOENCODING':'utf-8'}
