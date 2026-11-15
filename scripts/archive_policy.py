@@ -11,7 +11,7 @@ import re
 import sys
 import time
 
-from usage_ledger import usage_scope
+from usage_ledger import current_scope, usage_scope
 from codex_adapter import BackendError, ModelSkipped, CodexBackend, find_codex, generate_json
 from oil_codex_title import (ROOT, atomic_json, data_dir, load_config, read_json,
                              item_text, project_hint, state_path, thread_lock, valid_id, worker_slot)
@@ -19,6 +19,8 @@ from oil_codex_title import (ROOT, atomic_json, data_dir, load_config, read_json
 DAY = 86400
 CONTEXT_VERSION = 2
 MAX_CONTEXT_CHARS = 12000
+DEFAULT_BUDGET_SECONDS = 150
+MIN_MODEL_WINDOW_SECONDS = 20
 POLICY = {"enabled": False, "completed_days": 14, "inactive_days": 30, "protected_ids": []}
 SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
     "classification": {"type": "string", "enum": ["completed", "no_pending", "open", "uncertain"]},
@@ -170,9 +172,13 @@ def eligible(classification, age, cfg):
 
 
 def classify(binary, root, config, context, *, before_model=None, timeout_seconds=None):
+    scope = current_scope()
+    if scope is not None:
+        scope.deferred_start = True
     timeout = config["model_timeout_seconds"]
     if timeout_seconds is not None:
         timeout = min(timeout, timeout_seconds)
+    min_window = MIN_MODEL_WINDOW_SECONDS if config["model_timeout_seconds"] >= MIN_MODEL_WINDOW_SECONDS else 0
     config = {**config, "model_timeout_seconds": timeout}
     deadline = time.monotonic() + config["model_timeout_seconds"]
     with worker_slot(root, config["max_parallel_workers"], config["model_timeout_seconds"]) as acquired:
@@ -180,10 +186,12 @@ def classify(binary, root, config, context, *, before_model=None, timeout_second
         if not acquired or remaining <= 0:
             raise BackendError("模型并发已满，保留话题")
         return generate_json(binary, {**config, "model_timeout_seconds": remaining}, context,
-                             ROOT / "prompts/archiving.md", SCHEMA, before_model=before_model)
+                             ROOT / "prompts/archiving.md", SCHEMA, before_model=before_model,
+                             min_remaining_seconds=min_window)
 
 
-def scan(backend, root, classifier=None, max_evaluations=10, *, scheduled=False, budget_seconds=150):
+def scan(backend, root, classifier=None, max_evaluations=10, *, scheduled=False,
+         budget_seconds=DEFAULT_BUDGET_SECONDS, min_model_window_seconds=MIN_MODEL_WINDOW_SECONDS):
     """预览也持久化评估缓存；同一内容版本只尝试一次模型，失败不自动重试。"""
     deadline = time.monotonic() + budget_seconds
     now = time.time()
@@ -244,9 +252,13 @@ def scan(backend, root, classifier=None, max_evaluations=10, *, scheduled=False,
                     if classifier is None or counts["model_attempts"] >= max_evaluations:
                         counts["awaiting_evaluation"] += 1
                         continue
+                    if deadline - time.monotonic() < min_model_window_seconds:
+                        counts["budget_exhausted"] += 1
+                        break
+                    ensure_scan_active()
                     def before_model():
                         ensure_scan_active()
-                        if time.monotonic() >= deadline:
+                        if deadline - time.monotonic() < min_model_window_seconds:
                             raise ModelSkipped("budget_exhausted")
                         if backend.is_archived(tid, thread.get("cwd")):
                             raise ModelSkipped("archived")
@@ -257,16 +269,30 @@ def scan(backend, root, classifier=None, max_evaluations=10, *, scheduled=False,
                                 or not fresh_info or fresh_info[1] != fingerprint):
                             raise ModelSkipped("stale")
                         ensure_scan_active()
-                    before_model()
-                    # 先落盘再调用，崩溃/异常不会导致下一次无界重试。
                     state = {"fingerprint": fingerprint, "context_version": CONTEXT_VERSION,
                              "classification": "uncertain",
                              "reason": "评估未完成，自动保留；需要时可显式重新评估", "evaluated_at": now}
-                    atomic_json(record_path(root, tid), state)
-                    counts["model_attempts"] += 1
-                    with usage_scope(root, "archiving", tid) as accounting:
-                        result, usage = classifier(context, before_model=before_model,
-                                timeout_seconds=max(0, deadline - time.monotonic()))
+                    started = False
+                    def mark_started():
+                        nonlocal started
+                        if started:
+                            return
+                        started = True
+                        # 先落盘再真正拉起模型，崩溃/异常不会导致下一次无界重试；队列等待或预算不足跳过时不污染缓存。
+                        atomic_json(record_path(root, tid), state)
+                        counts["model_attempts"] += 1
+                    with usage_scope(root, "archiving", tid, on_begin=mark_started) as accounting:
+                        try:
+                            result, usage = classifier(context, before_model=before_model,
+                                    timeout_seconds=max(0, deadline - time.monotonic()))
+                        except ModelSkipped:
+                            raise
+                        except BaseException:
+                            if not accounting.deferred_start:
+                                mark_started()
+                            raise
+                        if not accounting.deferred_start:
+                            mark_started()
                         ensure_scan_active()
                         if (not isinstance(result, dict) or set(result) != {"classification", "reason"}
                                 or result["classification"] not in SCHEMA["properties"]["classification"]["enum"]
@@ -349,6 +375,8 @@ def main():
     p = sub.add_parser("scan")
     p.add_argument("--live", action="store_true", help="允许独立模型评估新候选，消耗额度")
     p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS,
+                   help="整轮扫描软预算（秒），范围 1～600")
     p.add_argument("--scheduled", action="store_true", help="定时入口；归档开关关闭时不评估")
     p.add_argument("--guards-stdin", action="store_true", help="先从 stdin 保存新鲜宿主名单，再在同一调用内扫描")
     p.add_argument("--current-id", default=os.environ.get("CODEX_THREAD_ID"))
@@ -387,6 +415,8 @@ def main():
             if args.command == "scan":
                 if not 0 <= args.limit <= 20:
                     raise ValueError("单次模型评估数量必须在 0～20 之间")
+                if not 1 <= args.budget_seconds <= 600:
+                    raise ValueError("扫描时间预算必须在 1～600 秒之间")
                 if args.guards_stdin:
                     save_guards(root, json.load(sys.stdin), args.current_id)
             config = load_config(root)
@@ -394,7 +424,8 @@ def main():
             with CodexBackend(binary) as backend:
                 if args.command == "scan":
                     fn = (lambda context, **kw: classify(binary, root, config, context, **kw)) if args.live else None
-                    result = scan(backend, root, fn, args.limit, scheduled=args.scheduled)
+                    result = scan(backend, root, fn, args.limit, scheduled=args.scheduled,
+                                  budget_seconds=args.budget_seconds)
                 elif args.command == "check":
                     result = check(backend, root, args.thread_id)
                 else:

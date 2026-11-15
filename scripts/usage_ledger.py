@@ -29,12 +29,16 @@ def _save(path, data):
 
 
 class Scope:
-    def __init__(self, root, purpose, thread_id):
+    def __init__(self, root, purpose, thread_id, *, on_begin=None):
         self.root, self.purpose, self.thread_id = Path(root), purpose, thread_id
         self.attempts = []
         self.outcome = "not_completed"
+        self.on_begin = on_begin
+        self.deferred_start = False
 
     def begin(self, config):
+        if self.on_begin:
+            self.on_begin()
         attempt = Attempt(self, config)
         self.attempts.append(attempt)
         return attempt
@@ -61,8 +65,8 @@ class Attempt:
 
 
 @contextmanager
-def usage_scope(root, purpose, thread_id=None):
-    scope = Scope(root, purpose, thread_id)
+def usage_scope(root, purpose, thread_id=None, *, on_begin=None):
+    scope = Scope(root, purpose, thread_id, on_begin=on_begin)
     token = _scope.set(scope)
     try:
         yield scope
@@ -74,6 +78,10 @@ def usage_scope(root, purpose, thread_id=None):
         for attempt in scope.attempts:
             attempt.data["outcome"] = scope.outcome
             _save(attempt.path, attempt.data)
+
+
+def current_scope():
+    return _scope.get()
 
 
 def begin_attempt(config):

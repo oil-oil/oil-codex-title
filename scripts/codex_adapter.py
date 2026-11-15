@@ -313,7 +313,7 @@ def _generate_title_once(binary, config, context, plugin_root, *, before_model=N
     return normalize_project_prefix(result, context), usage
 
 
-def generate_json(binary, config, context, policy, output_schema, *, before_model=None):
+def generate_json(binary, config, context, policy, output_schema, *, before_model=None, min_remaining_seconds=0):
     """隔离的无工具临时模型，供命名和归档评估共用。"""
     deadline = time.monotonic() + config["model_timeout_seconds"]
     # 默认复用当前登录；第三方服务商只传入选中配置，不继承用户的工具设置。
@@ -339,13 +339,15 @@ def generate_json(binary, config, context, policy, output_schema, *, before_mode
             args.insert(3, "--ignore-user-config")
         if config.get("service_tier"):
             args[2:2] = ["-c", "service_tier=" + json.dumps(config["service_tier"])]
-        env = isolated_provider_env(temp) if config.get("use_user_config", False) else worker_env()
         # 配额等待和每次内部重试之后，紧接真实模型进程启动前复核。
         if before_model:
             before_model()
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise BackendError("状态复核已耗尽本次模型时间预算")
+        if remaining < min_remaining_seconds:
+            raise ModelSkipped("model_budget_exhausted")
+        env = isolated_provider_env(temp) if config.get("use_user_config", False) else worker_env()
         attempt = begin_attempt(config)
         usage, status = {}, "interrupted"
         try:
