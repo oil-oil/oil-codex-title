@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 import statistics
+import sys
 import time
 from codex_adapter import find_codex, generate_title
 from oil_codex_title import DEFAULTS, validate_candidate
@@ -13,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--live', action='store_true', help='允许实际调用 GPT-6 Luna Fast')
     parser.add_argument('--output', type=Path, default=ROOT / 'docs/naming-evaluation.json')

@@ -191,7 +191,7 @@ class PlatformTests(unittest.TestCase):
                 self.assertNotIn(str(user_home), str(raised.exception))
 
     def test_fixture_evaluator_can_read_chinese_in_legacy_locale(self):
-        env = os.environ | {'PYTHONUTF8':'0','PYTHONIOENCODING':'utf-8'}
+        env = os.environ | {'PYTHONUTF8':'0','PYTHONIOENCODING':'ascii'}
         p = subprocess.run([sys.executable,str(ROOT/'scripts/evaluate_naming.py')],
             capture_output=True, encoding='utf-8', env=env, timeout=10)
         self.assertEqual(p.returncode,0,p.stderr)

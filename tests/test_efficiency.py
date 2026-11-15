@@ -6,8 +6,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 import tempfile
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -232,7 +234,7 @@ class EfficiencyTests(unittest.TestCase):
         raw = '\n'.join(['noise', 'null', json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': -1, 'output_tokens': True}}), json.dumps({'type': 'turn.completed', 'usage': USAGE})])
         self.assertEqual(parse_usage(raw), (USAGE, False))
 
-    def run_archive_cli(self, host, enabled=True):
+    def run_archive_cli(self, host, enabled=True, extra_args=()):
         title.atomic_json(self.root / 'archive/config.json', {'enabled': enabled})
         output = io.StringIO()
         backend = archive_fixtures.Backend()
@@ -240,7 +242,7 @@ class EfficiencyTests(unittest.TestCase):
              patch.object(archive, 'data_dir', return_value=self.root), \
              patch.object(archive, 'find_codex', return_value='unused') as binary, \
              patch.object(archive, 'CodexBackend') as factory, \
-             patch.object(sys, 'argv', ['archive', 'scan', '--scheduled', '--guards-stdin', '--current-id', ID, '--limit', '0']), \
+             patch.object(sys, 'argv', ['archive', 'scan', '--scheduled', '--guards-stdin', '--current-id', ID, '--limit', '0', *extra_args]), \
              patch.object(sys, 'stdin', io.StringIO(json.dumps(host))), patch.object(sys, 'stdout', output):
             factory.return_value.__enter__.return_value = backend
             code = archive.main()
@@ -270,6 +272,201 @@ class EfficiencyTests(unittest.TestCase):
         self.assertEqual(report['status'], 'disabled')
         binary.assert_not_called()
         self.assertFalse((self.root / 'archive/guards.json').exists())
+
+    def test_archive_cli_budget_seconds_flag(self):
+        host = {'pinnedThreads': [], 'threads': []}
+        for extra, expected in (((), archive.DEFAULT_BUDGET_SECONDS), (('--budget-seconds', '300'), 300)):
+            with self.subTest(extra=extra), patch.object(archive, 'scan', return_value={'status': 'preview', 'counts': {}, 'candidates': []}) as mocked:
+                code, report, _ = self.run_archive_cli(host, extra_args=extra)
+            self.assertEqual(code, 0)
+            self.assertEqual(report['status'], 'preview')
+            self.assertEqual(mocked.call_args.kwargs['budget_seconds'], expected)
+        for bad in ('0', '601'):
+            with self.subTest(bad=bad):
+                code, report, binary = self.run_archive_cli(host, extra_args=('--budget-seconds', bad))
+                self.assertEqual(code, 1)
+                self.assertEqual(report['status'], 'error')
+                binary.assert_not_called()
+
+    def test_archive_min_window_skips_without_writing_uncertain_and_recovers(self):
+        self.candidate = {'classification': 'completed', 'reason': '已完成'}
+        clock = [1000.0]
+        backend = archive_fixtures.Backend()
+        title.atomic_json(self.root / 'archive/config.json', {'enabled': True})
+        archive.save_guards(self.root, {'pinnedThreads': [], 'threads': []})
+        cfg = {**self.config, 'model_timeout_seconds': 45}
+        model = lambda context, **kw: archive.classify('unused', self.root, cfg, context, **kw)
+        with patch.dict(os.environ, {'CODEX_HOME': str(self.root / 'codex')}), \
+             patch('time.monotonic', side_effect=lambda: clock[0]), \
+             patch('codex_adapter.subprocess.run', side_effect=self.fake_run) as run:
+            first = archive.scan(backend, self.root, model, budget_seconds=15)
+        self.assertEqual(first['counts']['budget_exhausted'], 1)
+        run.assert_not_called()
+        self.assertFalse(archive.record_path(self.root, ID).exists())
+
+        @contextmanager
+        def delayed_slot(*args):
+            clock[0] += 12.0
+            yield True
+
+        with patch.dict(os.environ, {'CODEX_HOME': str(self.root / 'codex')}), \
+             patch('time.monotonic', side_effect=lambda: clock[0]), \
+             patch.object(archive, 'worker_slot', delayed_slot), \
+             patch('codex_adapter.subprocess.run', side_effect=self.fake_run) as run:
+            second = archive.scan(backend, self.root, model, budget_seconds=30)
+        self.assertEqual(second['counts']['budget_exhausted'], 1)
+        run.assert_not_called()
+        self.assertFalse(archive.record_path(self.root, ID).exists())
+
+        with patch.dict(os.environ, {'CODEX_HOME': str(self.root / 'codex')}), \
+             patch('time.monotonic', side_effect=lambda: clock[0]), \
+             patch('codex_adapter.subprocess.run', side_effect=self.fake_run) as run:
+            third = archive.scan(backend, self.root, model, budget_seconds=150)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(len(third['candidates']), 1)
+
+    def test_archive_model_budget_exhausted_does_not_write_uncertain(self):
+        self.candidate = {'classification': 'completed', 'reason': '已完成'}
+        cfg = {**self.config, 'model_timeout_seconds': 45}
+        model = lambda context, **kw: archive.classify('unused', self.root, cfg, context, **kw)
+        for wait_seconds, count_key in ((30.0, 'model_budget_exhausted'), (45.0, 'errors')):
+            with self.subTest(wait_seconds=wait_seconds):
+                clock = [1000.0]
+                backend = archive_fixtures.Backend()
+                title.atomic_json(self.root / 'archive/config.json', {'enabled': True})
+                archive.save_guards(self.root, {'pinnedThreads': [], 'threads': []})
+                archive.record_path(self.root, ID).unlink(missing_ok=True)
+
+                @contextmanager
+                def slow_slot(*args):
+                    clock[0] += wait_seconds
+                    yield True
+
+                with patch.dict(os.environ, {'CODEX_HOME': str(self.root / 'codex')}), \
+                     patch('time.monotonic', side_effect=lambda: clock[0]), \
+                     patch.object(archive, 'worker_slot', slow_slot), \
+                     patch('codex_adapter.subprocess.run', side_effect=self.fake_run) as run:
+                    skipped = archive.scan(backend, self.root, model, budget_seconds=300)
+                self.assertEqual(skipped['counts'][count_key], 1)
+                run.assert_not_called()
+                self.assertFalse(archive.record_path(self.root, ID).exists())
+
+                with patch.dict(os.environ, {'CODEX_HOME': str(self.root / 'codex')}), \
+                     patch('codex_adapter.subprocess.run', side_effect=self.fake_run) as run:
+                    recovered = archive.scan(backend, self.root, model, budget_seconds=300)
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(len(recovered['candidates']), 1)
+
+    def test_archive_single_eval_host_calls_deduplicated(self):
+        self.candidate = {'classification': 'completed', 'reason': '已完成'}
+        is_archived_calls = 0
+
+        class CountingBackend(archive_fixtures.Backend):
+            def is_archived(self, tid, cwd=None):
+                nonlocal is_archived_calls
+                is_archived_calls += 1
+                return super().is_archived(tid, cwd)
+
+        backend = CountingBackend()
+        title.atomic_json(self.root / 'archive/config.json', {'enabled': True})
+        archive.save_guards(self.root, {'pinnedThreads': [], 'threads': []})
+        with patch.dict(os.environ, {'CODEX_HOME': str(self.root / 'codex')}), \
+             patch('codex_adapter.subprocess.run', side_effect=self.fake_run):
+            result = archive.scan(backend, self.root,
+                lambda context, **kw: archive.classify('unused', self.root, self.config, context, **kw))
+        self.assertEqual(backend.reads, 3)
+        self.assertEqual(is_archived_calls, 2)
+        self.assertEqual(len(result['candidates']), 1)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_archive_synthetic_benchmark_70_recent_and_10_evaluable(self):
+        self.candidate = {'classification': 'completed', 'reason': '已完成'}
+
+        class SyntheticBackend:
+            def __init__(self, clock, threads):
+                self.clock = clock
+                self.threads = {t['id']: t for t in threads}
+                self.order = [t['id'] for t in threads]
+                self.reads = 0
+                self.is_archived_calls = 0
+
+            def list_threads(self, *, archived=False, cwd=None):
+                if archived:
+                    return iter([])
+                return iter(copy.deepcopy(self.threads[tid]) for tid in self.order)
+
+            def read(self, tid):
+                self.reads += 1
+                self.clock[0] += 0.2
+                return copy.deepcopy(self.threads[tid])
+
+            def is_archived(self, tid, cwd=None):
+                self.is_archived_calls += 1
+                self.clock[0] += 0.2
+                return False
+
+        now = archive.time.time()
+        def make_threads():
+            items = []
+            for idx in range(70):
+                tid = f'00000000-0000-0000-0000-{idx + 1:012d}'
+                items.append({'id': tid, 'name': f'📝 最近｜任务{idx}', 'source': 'vscode', 'cwd': '/sample',
+                              'status': {'type': 'notLoaded'}, 'updatedAt': now - 3600,
+                              'turns': [{'id': 't1', 'status': 'completed', 'completedAt': now - archive.DAY,
+                                         'items': [{'type': 'userMessage', 'content': [{'type': 'text', 'text': 'recent work'}]},
+                                                   {'type': 'agentMessage', 'phase': 'final_answer', 'text': 'done'}]}]})
+            for idx in range(10):
+                tid = f'11111111-1111-1111-1111-{idx + 1:012d}'
+                items.append({'id': tid, 'name': f'🎨 旧任务｜评估{idx}', 'source': 'vscode', 'cwd': '/sample',
+                              'status': {'type': 'notLoaded'}, 'updatedAt': now - 20 * archive.DAY,
+                              'turns': [{'id': 't1', 'status': 'completed', 'completedAt': now - 20 * archive.DAY,
+                                         'items': [{'type': 'userMessage', 'content': [{'type': 'text', 'text': f'design item {idx}'}]},
+                                                   {'type': 'agentMessage', 'phase': 'final_answer', 'text': 'delivered'}]}]})
+            return items
+
+        def run_case(root, budget):
+            clock = [1000.0]
+            backend = SyntheticBackend(clock, make_threads())
+            title.atomic_json(root / 'archive/config.json', {'enabled': True})
+            archive.save_guards(root, {'pinnedThreads': [], 'threads': []})
+            cfg = {**self.config, 'model_timeout_seconds': 45}
+            def slow_model(args, **kw):
+                clock[0] += 13.0
+                return self.fake_run(args, **kw)
+            with patch.dict(os.environ, {'CODEX_HOME': str(root / 'codex')}), \
+                 patch('time.monotonic', side_effect=lambda: clock[0]), \
+                 patch('codex_adapter.subprocess.run', side_effect=slow_model) as run:
+                report = archive.scan(backend, root,
+                    lambda context, **kw: archive.classify('unused', root, cfg, context, **kw),
+                    budget_seconds=budget)
+            return clock[0] - 1000.0, backend, report, run.call_count
+
+        elapsed_150, b_150, r_150, calls_150 = run_case(self.root, 150)
+        self.assertAlmostEqual(elapsed_150, 140.2, places=6)
+        self.assertEqual(calls_150, 9)
+        self.assertEqual(r_150['counts']['model_attempts'], 9)
+        self.assertEqual(r_150['counts']['budget_exhausted'], 1)
+        self.assertEqual(r_150['counts'].get('errors', 0), 0)
+        self.assertEqual(len(r_150['candidates']), 9)
+        last_tid = '11111111-1111-1111-1111-000000000010'
+        self.assertFalse(archive.record_path(self.root, last_tid).exists())
+
+        with patch.dict(os.environ, {'CODEX_HOME': str(self.root / 'codex')}), \
+             patch('codex_adapter.subprocess.run', side_effect=self.fake_run) as run:
+            followup = archive.scan(b_150, self.root,
+                lambda context, **kw: archive.classify('unused', self.root, self.config, context, **kw),
+                budget_seconds=150)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(len(followup['candidates']), 10)
+
+        with tempfile.TemporaryDirectory() as other:
+            root_300 = Path(other)
+            elapsed_300, b_300, r_300, calls_300 = run_case(root_300, 300)
+        self.assertAlmostEqual(elapsed_300, 154.0, places=6)
+        self.assertEqual(b_300.reads + b_300.is_archived_calls, 120)
+        self.assertEqual(calls_300, 10)
+        self.assertEqual(r_300['counts']['model_attempts'], 10)
+        self.assertEqual(len(r_300['candidates']), 10)
 
 
 if __name__ == '__main__':

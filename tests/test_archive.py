@@ -295,7 +295,7 @@ class ArchiveTests(unittest.TestCase):
             with self.subTest(change=change):
                 self.enable()
                 self.backend.archived = False
-                atomic_json(archive.record_path(self.root, ID), {})
+                archive.record_path(self.root, ID).unlink(missing_ok=True)
                 @contextmanager
                 def queued(*args):
                     if change == "pause":
@@ -309,6 +309,7 @@ class ArchiveTests(unittest.TestCase):
                     result = self.scan(model)
                 run.assert_not_called()
                 self.assertFalse(result["candidates"])
+                self.assertFalse(archive.record_path(self.root, ID).exists())
 
 
 
